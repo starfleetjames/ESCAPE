@@ -10,9 +10,9 @@
 ;
 ; OPTIONAL INPUTS:
 ;   distance_pc [float]:             How many parsecs distant is this star in units of parsecs? 
-;                                    Default is 10 (the average of DEEP targets at time of CSR). 
+;                                    Default is 6 (CSR limit for solar type stars in DEEP survey). 
 ;   ism_attenuation [float]:         How much ISM attenuation to apply. 
-;                                    Default 0. 
+;                                    Default 1d18 (a typical value for very near ISM)
 ;                                    NOTE: This isn't in use yet. Just something initially thinking might be needed/useful.
 ;   coronal_temperature_k [float]:   The temperature of the corona of the star. If set to 1e6 (solar value) nothing is done. 
 ;                                    If >1e6, then a scaling is applied, shifting the amount of dimming from 1e6 K-sensitive lines toward this values emissions lines (if any). 
@@ -28,6 +28,7 @@
 ; OUTPUTS:
 ;   result [anonymous structure]: In order to have a single return, the multiple outputs are contained in this structure with the fields: 
 ;     snr [fltarr]: The signal to noise ratio over time for the event. 
+;     time_sec [fltarr]: Elapsed time from arbitrary point before event.
 ;     depth [float]: The estimated dimming depth from simulated light curve. 
 ;     slope [float]: The estimated dimming slope from simulated light curve.
 ;     sigma_detection [float]: The confidence of the detection. 
@@ -46,8 +47,8 @@
 PRO escape_simulate_dimming, distance_pc=distance_pc, ism_attenuation=ism_attenuation, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio
 
   ; Defaults
-  IF distance_pc EQ !NULL THEN distance_pc = 10.
-  IF ism_attenuation EQ !NULL THEN ism_attenuation = 0.
+  IF distance_pc EQ !NULL THEN distance_pc = 6.
+  IF ism_attenuation EQ !NULL THEN ism_attenuation = 1d18
   IF coronal_temperature_k EQ !NULL THEN coronal_temperature_k = 1e6
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
   
@@ -58,13 +59,6 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, ism_attenuation=ism_attenu
   readcol, dataloc + 'effective_area/ESCAPE_vault_single460_effa_Zr_Zr.dat', $
            a_wave,a_aeff,grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
            format='I, F, F, F, F, F, F, F, F', /SILENT
-
-
-  ; Now add them back up for each order if desired, 05/01/19;
-  a1_aeff = a1_aeff40 + a1_aeff20
-  a2_aeff = a2_aeff40 + a2_aeff20
-  a3_aeff = a3_aeff40
-  a4_aeff = a4_aeff40
   
   ; Read EUVE effective areas for comparison to ESCAPE
   readcol, dataloc + 'effective_area/EUVE_LW_Aeff_trim.txt', $

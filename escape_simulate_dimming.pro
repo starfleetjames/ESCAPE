@@ -51,11 +51,19 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, ism_attenuation=ism_attenu
   IF ism_attenuation EQ !NULL THEN ism_attenuation = 1d18
   IF coronal_temperature_k EQ !NULL THEN coronal_temperature_k = 1e6
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
-  
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
   saveloc = '~/Dropbox/Research/ResearchScientist_APL/Analysis/ESCAPE Dimming Analysis/'
+  
+  ; Tuneable parameters
+  escape_bandpass_min = 90 ; [Å] shortest wavelength in the main ESCAPE bandpass
+  escape_bandpass_max = 800 ; [Å] longest ""  
+  
+  ; Read SDO/EVE light curve data
+  restore, dataloc + 'eve_for_escape/EVE Dimming Data for ESCAPE.sav'
+  eve_irrad = eve.irradiance
+  eve_wave = eve[0].wavelength * 10. ; [Å] Converted from nm to Å
 
-  ; Read data
+  ; Read ESCAPE effective area data
   readcol, dataloc + 'effective_area/ESCAPE_vault_single460_effa_Zr_Zr.dat', $
            a_wave,a_aeff,grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
            format='I, F, F, F, F, F, F, F, F', /SILENT
@@ -81,7 +89,21 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, ism_attenuation=ism_attenu
     
     euve_aeff = (n_elements(euve_aeff) EQ 0) ? aeff : [euve_aeff, aeff]
   ENDFOR
-           
+  
+  ;;
+  ; Start manipulating data
+  ;; 
+  
+  ; Truncate EVE wavelength to just the main ESCAPE band
+  trunc_indices = where(eve_wave GE escape_bandpass_min AND eve_wave LE escape_bandpass_max)
+  eve_wave = eve_wave[trunc_indices]
+  eve_irrad = eve_irrad[trunc_indices, *] ; [W/m2/nm]
+  
+  ; Convert EVE irradiance to photons/sec? 
+  ; Or do I want to leave the /m2 so I can multiply by the Aeffs [cm2] and get W/nm
+  ; Will also need to convert /nm to /Å, and reduce the spectral resolution from 1 Å (EVE) to 1.5 Å (ESCAPE)
+  ;    Actually the STM says ESCAPE projected performance is 0.92Å @ 171 Å. Is that what I should use? And is it very different at other wavelengths?
+  
 STOP
 
 END

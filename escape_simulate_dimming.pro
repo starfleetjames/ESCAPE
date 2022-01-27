@@ -42,6 +42,7 @@
 ; RESTRICTIONS:
 ;   Requires access to the canonical SDO/EVE dimming curve and ESCAPE effective area files.
 ;   Must be run in the IDLDE due to the way the file with multiple sub-functions is written and then compiled. Else, need to put all the subfunctions in reverse order.
+;   To run, make sure the IDLDE environment is clean by clicking the Reset Session button. Then click Compile button. Then click the Run button.
 ;
 ; EXAMPLE:
 ;   result = escape_simulate_dimming(distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6)
@@ -97,13 +98,15 @@ END
 
 FUNCTION read_eve, dataloc, escape_bandpass_min, escape_bandpass_max
   restore, dataloc + 'eve_for_escape/EVE Dimming Data for ESCAPE.sav'
-  eve_irrad = eve.irradiance ; [W/m2/nm]
-  eve_wave = eve[0].wavelength * 10. ; [Å] Converted from nm to Å
+  irradiance = eve.irradiance ; [W/m2/nm]
+  wave = eve[0].wavelength * 10. ; [Å] Converted from nm to Å
+  jd = jpmtai2jd(eve.tai)
+  time_iso = jpmjd2iso(jd)
   
   ; Truncate EVE wavelength to just the main ESCAPE band
-  trunc_indices = where(eve_wave GE escape_bandpass_min AND eve_wave LE escape_bandpass_max)
-  eve_wave = eve_wave[trunc_indices]
-  eve_irrad = eve_irrad[trunc_indices, *] ; [W/m2/nm] = [J/s/m2/nm]
+  trunc_indices = where(wave GE escape_bandpass_min AND wave LE escape_bandpass_max)
+  wave = wave[trunc_indices]
+  irradiance = irradiance[trunc_indices, *] ; [W/m2/nm] = [J/s/m2/nm]
   
   ; Change irradiance units for consistency with ESCAPE
   J2erg = 1d7 
@@ -111,15 +114,15 @@ FUNCTION read_eve, dataloc, escape_bandpass_min, escape_bandpass_max
   nm2A = 10.
   A2cm = 1d8
   hc = 6.6261d-27 * 2.99792458d10
-  eve_irrad = eve_irrad * j2erg / m2cm^2 / nm2A ; [erg/s/cm2/Å]
-  FOR i = 0, n_elements(eve_irrad[0, *]) - 1 DO BEGIN
-    eve_irrad[*, i] /= (hc / (eve_wave / A2cm))
+  irradiance = irradiance * j2erg / m2cm^2 / nm2A ; [erg/s/cm2/Å]
+  FOR i = 0, n_elements(irradiance[0, *]) - 1 DO BEGIN
+    irradiance[*, i] /= (hc / (wave / A2cm))
   ENDFOR
   
   ; TODO: Do I need to reduce the spectral resolution from 1 Å (EVE) to 1.5 Å (ESCAPE)
   ;    Actually the STM says ESCAPE projected performance is 0.92Å @ 171 Å. Is that what I should use? And is it very different at other wavelengths?
   
-  return, {eve, wave:eve_wave, irrad:eve_irrad}
+  return, {eve, wave:wave, irrad:irradiance, jd:jd, time_iso:time_iso}
 END
 
 
@@ -232,12 +235,51 @@ FUNCTION apply_effective_area, eve_stellar, instrument
   FOR i = 0, n_elements(eve_stellar.irrad[0, *]) - 1 DO BEGIN
     intensity[*, i] = eve_stellar.irrad[*, i] * aeff ; [counts/s/Å] ([photons/s/cm2/Å] * [counts*cm2/photon]) - aeff also converts photons to counts
   ENDFOR
-  instrument_updated = {wave:eve_stellar.wave, aeff:aeff, intensity:intensity}
+  instrument_updated = {wave:eve_stellar.wave, aeff:aeff, intensity:intensity, jd:eve_stellar.jd, time_iso:eve_stellar.time_iso}
   return, instrument_updated
 END
 
 
 FUNCTION characterize_dimming, instrument
-
+  
+  emission_lines = extract_emission_lines(instrument)
+  preflare_baselines = estimate_preflare_baseline(emission_lines)
+  STOP ; TODO: Pick up here
+  
+  
   return, dimming
+END
+
+
+FUNCTION extract_emission_lines, instrument
+  line_centers = [93.9, 101.6, 103.9, 108.4, 117.2, 118.7, 121.8, 128.8, 132.8, 132.9, 135.8, 148.4, 167.5, 168.2, 168.5, 171.1, 174.5, $
+                 175.3, 177.2, 179.8, 180.4, 180.4, 182.2, 184.5, 184.8, 185.2, 186.6, 186.9, 186.9, 188.2, 188.3, 192.0, 192.4, 193.5, $
+                 195.1, 196.5, 202.0, 203.8, 203.8, 211.3, 217.1, 219.1, 221.8, 244.9, 252.0, 255.1, 256.7, 258.4, 263.0, 264.8, 270.5, $
+                 274.2, 284.2, 292.0, 303.3, 303.8, 315.0, 319.8, 335.4, 353.8, 356.0, 360.8, 368.1, 417.7, 436.7, 465.2, 499.4, 520.7]
+  intensity = dblarr(n_elements(line_centers), n_elements(instrument.intensity[0, *]))
+  FOR i = 0, n_elements(line_centers) - 1 DO BEGIN
+    wave_indices = where(instrument.wave GE line_centers[i]-1 and instrument.wave LE line_centers[i]+1, count)
+    IF count EQ 0 THEN BEGIN
+      message, /INFO, 'Did not find any wavelengths around the emission line center, but should have.'
+      STOP
+    ENDIF
+    intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN)
+  ENDFOR
+  
+  ; Drop final point in time which is always invalid for some reason 
+  jd = instrument.jd[0:-2]
+  time_iso = instrument.time_iso[0:-2]
+  intensity = intensity[*, 0:-2]
+  
+  return, {emission_lines, wave:line_centers, intensity:intensity, jd:jd, time_iso:time_iso} 
+END
+
+
+FUNCTION estimate_preflare_baseline, emission_lines
+  preflare_baselines = dblarr(n_elements(emission_lines.wave))
+  FOR i = 0, n_elements(emission_lines.intensity[*, 0]) - 1 DO BEGIN
+    line = emission_lines.intensity[i, *] 
+    preflare_baselines[i] = median(line) ; The simplest possible estimate -- inspected all by eye and they are all reasonable
+  ENDFOR
+  return, preflare_baselines
 END

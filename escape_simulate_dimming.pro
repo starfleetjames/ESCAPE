@@ -135,6 +135,25 @@ FUNCTION read_escape_midex, dataloc
   readcol, dataloc + 'effective_area/ESCAPE_effa_Pt_Zr040119.dat', $
     a_wave,a_aeff,grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
     format='I, F, F, F, F, F, F, F, F', /SILENT
+    
+  ; Account for the data gap from 550-900 Å in the file
+  baseline = read_escape(dataloc)
+  waves_to_add_indices = where(baseline.wave GE 550 and baseline.wave LT 900, count)
+  IF count EQ 0 THEN BEGIN
+    message, /INFO, 'No Aeffs found in baseline file to account for the gap in the MidEx file. There should be.'
+    STOP
+  ENDIF
+  waves_to_add = baseline.wave(waves_to_add_indices)
+  aeffs_to_add = baseline.aeff(waves_to_add_indices)
+  ref_wave_for_scaling = 548 ; [Å]
+  scaling_factor = a_aeff[where(a_wave EQ ref_wave_for_scaling)] / baseline.aeff[where(baseline.wave EQ ref_wave_for_scaling)]
+  aeffs_to_add *= scaling_factor[0]
+  a_wave = [a_wave, waves_to_add]
+  a_aeff = [a_aeff, aeffs_to_add]
+  sort_indices = sort(a_wave)
+  a_wave = a_wave[sort_indices]
+  a_aeff = a_aeff[sort_indices]
+    
   return, {escape_midex, wave:a_wave, aeff:a_aeff}
 END
 
@@ -161,6 +180,7 @@ FUNCTION read_euve, dataloc
     euve_aeff = (n_elements(euve_aeff) EQ 0) ? aeff : [euve_aeff, aeff]
   ENDFOR
   wave = findgen(max(a_wave_lw) + 1)
+  
   return, {euve, wave:wave, aeff:euve_aeff}
 END
 
@@ -210,7 +230,7 @@ FUNCTION apply_effective_area, eve_stellar, instrument
   
   intensity = eve_stellar.irrad
   FOR i = 0, n_elements(eve_stellar.irrad[0, *]) - 1 DO BEGIN
-    intensity[*, i] = eve_stellar.irrad[*, i] * aeff ; [photons/s/Å] ([photons/s/cm2/Å] * [cm2])
+    intensity[*, i] = eve_stellar.irrad[*, i] * aeff ; [counts/s/Å] ([photons/s/cm2/Å] * [counts*cm2/photon]) - aeff also converts photons to counts
   ENDFOR
   instrument_updated = {wave:eve_stellar.wave, aeff:aeff, intensity:intensity}
   return, instrument_updated

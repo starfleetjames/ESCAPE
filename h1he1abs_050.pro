@@ -63,7 +63,7 @@ ncompv=n_elements(vshifts)
 ncompvdop=n_elements(vdop)
 
 if ncompd ne ncompv and ncompv ne ncompvdop then begin
-print,'velocity component ne column components ne doppler components'
+;print,'velocity component ne column components ne doppler components'
 goto,getout
 endif
 
@@ -121,7 +121,7 @@ for i=0,ncompd-1 do x0s(0,i)=sqrt(!dpi)*e^2*flams/(me*ccgs*bs(*,i)*nu0s)
 
 ;xsections as functions of wavelength
 for j=0,ncompd-1 do begin
-print,j,'  doing the velocity component with',ncols(j),vshifts(j),vdop(j)
+;print,j,'  doing the velocity component with',ncols(j),vshifts(j),vdop(j)
 for i=0,nlam0s-1 do us(0,i,j)=(nus(*,i)-nu0s(i))/nuds(i,j)
 for i=0,nlam0s-1 do xphis(0,i,j)=-x0s(i,j)*voigt(as(i,j),us(*,i,j))
 for i=0,nlam0s-1 do xphi(0,i,j)=[reverse(xphis(*,i,j)),xphis(1:*,i,j)]
@@ -136,7 +136,7 @@ lall=deltalam*(findgen(nall)/(nall-1))+lama(0,nlam0s-1)
 tall=lall*0.d0
 
 for j=0,ncompd-1 do begin
-print,'starting component',j,' interpolation onto the wide scale'
+;print,'starting component',j,' interpolation onto the wide scale'
 for i=nlam0s-1,0,-1 do begin
 start=min(lama(*,i))
 eend=max(lama(*,i))
@@ -144,14 +144,14 @@ lallcut=where(lall ge start and lall le eend)
 tall(lallcut(0))=tall(lallcut)+interpol(xphi(*,i,j)*ntots(j),lama(*,i)+lamshifts(i,j),lall(lallcut))
 endfor
 
-print,'ending component',j,' interpolation onto the wide scale'
+;print,'ending component',j,' interpolation onto the wide scale'
 
 ;fix the roll off below Lyman edge properly?
 
-print,'The average "lamshifts" is: '
-print,mean(lamshifts)
-print,'' 
-print,'The LyC rolloff starts at: ',lam0s(nlam0s-1)
+;print,'The average "lamshifts" is: '
+;print,mean(lamshifts)
+;print,'' 
+;print,'The LyC rolloff starts at: ',lam0s(nlam0s-1)
 ;help,nlam0s,lam0s ; number of Lyman series included, an array of Lyman series wavelengths
 ;print,ntots ; total column density input
 
@@ -196,7 +196,7 @@ gaunt = 1
 ;;;; He I opacity added, kf - 06/22/18
      n_he1 =    (ntots(j)) * rel_he1
      ; read in He I cross-sections from Samson 1966
-     readcol,dataloc_heI+'HeI_Xsec_samson66.txt',he1_wv,he1_mb,format='F,F'
+     readcol,dataloc_heI+'HeI_Xsec_samson66.txt',he1_wv,he1_mb,format='F,F', /SILENT
      ;reverse_wv = REVERSE(he1_wv)
      ;he1_xsec = REVERSE(he1_mb)*1d-18
      he1_xsec = he1_mb*1d-18
@@ -236,7 +236,8 @@ result = {wave:lall, transmittance:cprof}
 
 return,result
 
-getout:print,'bye'
+;getout:print,'bye'
+getout:bla=1
 end
 
 

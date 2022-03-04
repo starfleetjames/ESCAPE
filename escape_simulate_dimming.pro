@@ -279,8 +279,8 @@ FUNCTION characterize_dimming, instrument
   emission_lines = extract_emission_lines(instrument)
   preflare_baselines = estimate_preflare_baseline(emission_lines)
   
-  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3))
-  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN)
+  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3)) 
+  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN) ; FIXME: Multiply by wavelength bin size (0.2 or 1 Å?)
   
   ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
   p1 = errorplot(emission_lines.jd, intensity_171_174[0:-2], sqrt(intensity_171_174[0:-2]), thick=2, xtickunits='time', $
@@ -319,7 +319,8 @@ FUNCTION extract_emission_lines, instrument
       message, /INFO, 'Did not find any wavelengths around the emission line center, but should have.'
       STOP
     ENDIF
-    intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN)
+    intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN) 
+    ; FIXME: Do I also need to multiply by the bin width since this really _integrating_ over wavelength, not just summing? Bin width is either 1 Å or 0.2 Å, need to check
   ENDFOR
   
   ; Drop final point in time which is always invalid for some reason 

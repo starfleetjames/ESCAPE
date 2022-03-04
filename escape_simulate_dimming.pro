@@ -14,7 +14,6 @@
 ;                                    Default is 6 (CSR limit for solar type stars in DEEP survey). 
 ;   column_density [float]:          How much ISM attenuation to apply. 
 ;                                    Default 1d18 (a typical value for very near ISM)
-;                                    NOTE: This isn't in use yet. Just something initially thinking might be needed/useful.
 ;   coronal_temperature_k [float]:   The temperature of the corona of the star. If set to 1e6 (solar value) nothing is done. 
 ;                                    If >1e6, then a scaling is applied, shifting the amount of dimming from 1e6 K-sensitive lines toward this values emissions lines (if any). 
 ;                                    Default is 1e6 (solar value). 
@@ -22,6 +21,8 @@
 ;                                    Dimming intensity / background intensity may also be. 
 ;                                    Be careful playing with this parameter. Have good justification for scaling it up or down, possibly based on MHD simulations.
 ;                                    Default is 1 (solar baseline). 
+;   exposure_time_sec [float]:       How long to collect photons for a single exposure. The detector counts photons so in reality this can be done post facto rather than onboard.
+;                                    Default is 1800 (30 minutes). 
 ;
 ; KEYWORD PARAMETERS:
 ;   None
@@ -47,13 +48,14 @@
 ; EXAMPLE:
 ;   result = escape_simulate_dimming(distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6)
 ;-
-PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio
+PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
   IF column_density EQ !NULL THEN column_density = 1d18
   IF coronal_temperature_k EQ !NULL THEN coronal_temperature_k = 1e6
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
+  IF exposure_time_sec EQ !NULL THEN exposure_time_sec = 1800.
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
   saveloc = '~/Dropbox/Research/ResearchScientist_APL/Analysis/ESCAPE Dimming Analysis/'
   
@@ -74,6 +76,11 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   escape = apply_effective_area(eve_stellar, escape)
   escape_midex = apply_effective_area(eve_stellar, escape_midex)
   euve = apply_effective_area(eve_stellar, euve)
+  
+  ; Account for exposure time
+  escape = count_photons_for_exposure_time(escape, exposure_time_sec)
+  escape_midex = count_photons_for_exposure_time(escape_midex, exposure_time_sec)
+  euve = count_photons_for_exposure_time(euve, exposure_time_sec)
   
   ; Extract information relevant for dimming and assessment of instrument performance
   escape_dimming = characterize_dimming(escape)
@@ -116,7 +123,7 @@ FUNCTION read_eve, dataloc, escape_bandpass_min, escape_bandpass_max
   hc = 6.6261d-27 * 2.99792458d10
   irradiance = irradiance * j2erg / m2cm^2 / nm2A ; [erg/s/cm2/Å]
   FOR i = 0, n_elements(irradiance[0, *]) - 1 DO BEGIN
-    irradiance[*, i] /= (hc / (wave / A2cm))
+    irradiance[*, i] /= (hc / (wave / A2cm)) ; [photons/s/cm2/Å]
   ENDFOR
   
   ; TODO: Do I need to reduce the spectral resolution from 1 Å (EVE) to 1.5 Å (ESCAPE)
@@ -130,7 +137,7 @@ FUNCTION read_escape, dataloc
   readcol, dataloc + 'effective_area/ESCAPE_vault_single460_effa_Zr_Zr.dat', $
     a_wave,a_aeff,grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
     format='I, F, F, F, F, F, F, F, F', /SILENT
-  return, {escape, wave:a_wave, aeff:a_aeff}
+  return, {name:'ESCAPE CSR', wave:a_wave, aeff:a_aeff}
 END
 
 
@@ -157,7 +164,7 @@ FUNCTION read_escape_midex, dataloc
   a_wave = a_wave[sort_indices]
   a_aeff = a_aeff[sort_indices]
     
-  return, {escape_midex, wave:a_wave, aeff:a_aeff}
+  return, {name:'ESCAPE MidEx', wave:a_wave, aeff:a_aeff}
 END
 
 
@@ -184,7 +191,7 @@ FUNCTION read_euve, dataloc
   ENDFOR
   wave = findgen(max(a_wave_lw) + 1)
   
-  return, {euve, wave:wave, aeff:euve_aeff}
+  return, {name:'EUVE', wave:wave, aeff:euve_aeff}
 END
 
 
@@ -230,23 +237,72 @@ END
 
 FUNCTION apply_effective_area, eve_stellar, instrument
   aeff = interpol(instrument.aeff, instrument.wave, eve_stellar.wave)
-  
+
   intensity = eve_stellar.irrad
   FOR i = 0, n_elements(eve_stellar.irrad[0, *]) - 1 DO BEGIN
     intensity[*, i] = eve_stellar.irrad[*, i] * aeff ; [counts/s/Å] ([photons/s/cm2/Å] * [counts*cm2/photon]) - aeff also converts photons to counts
   ENDFOR
-  instrument_updated = {wave:eve_stellar.wave, aeff:aeff, intensity:intensity, jd:eve_stellar.jd, time_iso:eve_stellar.time_iso}
+  instrument_updated = {name:instrument.name, wave:eve_stellar.wave, aeff:aeff, intensity:intensity, jd:eve_stellar.jd, time_iso:eve_stellar.time_iso}
+  return, instrument_updated
+END
+
+
+FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
+  eve_time_binning = 10. ; [seconds] this is the cadence of the source EVE data, needed for rebinning
+  t_sec = (instrument.jd - instrument.jd[0]) * 86400.
+  number_of_exposures = ceil(max(t_sec)/exposure_time_sec)
+  intensity_exposures = dblarr(n_elements(instrument.aeff), number_of_exposures)
+  jd_centers = dblarr(number_of_exposures)
+  time_iso_centers = strarr(number_of_exposures)
+  
+  t_step = 0
+  i = 0
+  WHILE t_step LT max(t_sec) DO BEGIN
+    exposure_interval_indices = where(t_sec GE t_step AND t_sec LT (t_step + exposure_time_sec))
+    IF exposure_interval_indices EQ [-1] THEN message, /INFO, 'Uh oh. No times found in exposure interval.'
+    intensity_exposures[*, i] = (total(instrument.intensity[*, exposure_interval_indices], 2)) * eve_time_binning
+
+    ; new center time
+    jd_centers[i] = instrument.jd[exposure_interval_indices[n_elements(exposure_interval_indices)/2]]
+    time_iso_centers[i] = instrument.time_iso[exposure_interval_indices[n_elements(exposure_interval_indices)/2]]
+    
+    t_step+=exposure_time_sec
+    i++
+  ENDWHILE
+
+  instrument_updated = {name:instrument.name, wave:instrument.wave, aeff:instrument.aeff, intensity:intensity_exposures, jd:jd_centers, time_iso:time_iso_centers, exposure_time_sec:exposure_time_sec}
   return, instrument_updated
 END
 
 
 FUNCTION characterize_dimming, instrument
-  
   emission_lines = extract_emission_lines(instrument)
   preflare_baselines = estimate_preflare_baseline(emission_lines)
-  STOP ; TODO: Pick up here
+  
+  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3))
+  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN)
+  
+  ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
+  p1 = errorplot(emission_lines.jd, intensity_171_174[0:-2], sqrt(intensity_171_174[0:-2]), thick=2, xtickunits='time', $
+                 title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
+                 xtitle='hours', $
+                 ytitle='intensity [counts/Å]')
+  
+  STOP
   
   
+  
+  
+;  ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
+;  p1 = errorplot(emission_lines.jd, reform(emission_lines.intensity[15, *]), sqrt(reform(emission_lines.intensity[15, *])), thick=2, xtickunits='time', $
+;                 title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
+;                 xtitle='hours', $
+;                 ytitle='intensity [counts/Å]')
+;  p2 = plot(p1.xrange, [preflare_baselines[15], preflare_baselines[15]], linestyle='dashed', 'tomato', /OVERPLOT)
+;  
+;  STOP ; TODO: This is a temporary plot that needs to be checked -- really what I want to see?
+  
+  dimming = -1
   return, dimming
 END
 

@@ -23,7 +23,8 @@
 ;                                    Default is 1 (solar baseline). 
 ;   exposure_time_sec [float]:       How long to collect photons for a single exposure. The detector counts photons so in reality this can be done post facto rather than onboard.
 ;                                    Default is 1800 (30 minutes). 
-;
+;   num_lines_to_combine [integer]:  The number of emission lines to combine to boost signal. Will perform every combination of emission lines. Default is 5. 
+;   
 ; KEYWORD PARAMETERS:
 ;   None
 ;
@@ -56,6 +57,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   IF coronal_temperature_k EQ !NULL THEN coronal_temperature_k = 1e6
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
   IF exposure_time_sec EQ !NULL THEN exposure_time_sec = 1800.
+  IF num_lines_to_combine EQ !NULL THEN num_lines_to_combine = 5
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
   saveloc = '~/Dropbox/Research/ResearchScientist_APL/Analysis/ESCAPE Dimming Analysis/'
   
@@ -83,9 +85,9 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   euve = count_photons_for_exposure_time(euve, exposure_time_sec)
   
   ; Extract information relevant for dimming and assessment of instrument performance
-  escape_dimming = characterize_dimming(escape)
-  escape_midex_dimming = characterize_dimming(escape_midex)
-  euve_dimming = characterize_dimming(euve)
+  escape_dimming = characterize_dimming(escape, num_lines_to_combine)
+  escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine)
+  euve_dimming = characterize_dimming(euve, num_lines_to_combine)
   
   ; Compare the dimmings results
   p1 = plot(escape_dimming.time_sec, escape_dimming.snr, thick=2, $ 
@@ -275,19 +277,31 @@ FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
 END
 
 
-FUNCTION characterize_dimming, instrument
+FUNCTION characterize_dimming, instrument, num_lines_to_combine
   emission_lines = extract_emission_lines(instrument)
-  preflare_baselines = estimate_preflare_baseline(emission_lines)
+  preflare_baselines_single_lines = estimate_preflare_baseline(emission_lines)
+  depths_single_lines = get_dimming_depth(emission_lines, preflare_baselines_single_lines.intensity)
+  depths_combo_lines = combine_lines(emission_lines, num_lines_to_combine)
   
-  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3)) 
-  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN) ; FIXME: Multiply by wavelength bin size (0.2 or 1 Å?)
+  p1 = plot_dimming_performance(depths_single_lines, instrument, 1)
+  p_multi = plot_dimming_performance(depths_combo_lines, instrument, num_lines_to_combine)
+
+  STOP
   
+
+  
+  
+  ; Example plot of light curve
+  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3))
+  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN) * 0.2 ; [counts] -- 0.2 is the EVE wavelength bin width
+
   ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
-  p1 = errorplot(emission_lines.jd, intensity_171_174[0:-2], sqrt(intensity_171_174[0:-2]), thick=2, xtickunits='time', $
+  w = window(location=[2735, 0], dimensions=[650, 400])
+  p1 = errorplot(emission_lines.jd, intensity_171_174[0:-2], sqrt(intensity_171_174[0:-2]), thick=2, xtickunits='time', /CURRENT, $
                  title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
                  xtitle='hours', $
-                 ytitle='intensity [counts/Å]')
-  
+                 ytitle='intensity [counts]')
+                 
   STOP
   
   
@@ -297,7 +311,7 @@ FUNCTION characterize_dimming, instrument
 ;  p1 = errorplot(emission_lines.jd, reform(emission_lines.intensity[15, *]), sqrt(reform(emission_lines.intensity[15, *])), thick=2, xtickunits='time', $
 ;                 title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
 ;                 xtitle='hours', $
-;                 ytitle='intensity [counts/Å]')
+;                 ytitle='intensity [counts]')
 ;  p2 = plot(p1.xrange, [preflare_baselines[15], preflare_baselines[15]], linestyle='dashed', 'tomato', /OVERPLOT)
 ;  
 ;  STOP ; TODO: This is a temporary plot that needs to be checked -- really what I want to see?
@@ -308,19 +322,20 @@ END
 
 
 FUNCTION extract_emission_lines, instrument
-  line_centers = [93.9, 101.6, 103.9, 108.4, 117.2, 118.7, 121.8, 128.8, 132.8, 132.9, 135.8, 148.4, 167.5, 168.2, 168.5, 171.1, 174.5, $
-                 175.3, 177.2, 179.8, 180.4, 180.4, 182.2, 184.5, 184.8, 185.2, 186.6, 186.9, 186.9, 188.2, 188.3, 192.0, 192.4, 193.5, $
-                 195.1, 196.5, 202.0, 203.8, 203.8, 211.3, 217.1, 219.1, 221.8, 244.9, 252.0, 255.1, 256.7, 258.4, 263.0, 264.8, 270.5, $
-                 274.2, 284.2, 292.0, 303.3, 303.8, 315.0, 319.8, 335.4, 353.8, 356.0, 360.8, 368.1, 417.7, 436.7, 465.2, 499.4, 520.7]
+;  line_centers = [93.9, 101.6, 103.9, 108.4, 117.2, 118.7, 121.8, 128.8, 132.8, 132.9, 135.8, 148.4, 167.5, 168.2, 168.5, 171.1, 174.5, $
+;                 175.3, 177.2, 179.8, 180.4, 182.2, 184.5, 184.8, 185.2, 186.6, 186.9, 186.9, 188.2, 188.3, 192.0, 192.4, 193.5, 195.1, $
+;                 196.5, 202.0, 203.8, 203.8, 211.3, 217.1, 219.1, 221.8, 244.9, 252.0, 255.1, 256.7, 258.4, 263.0, 264.8, 270.5, 274.2, $
+;                 284.2, 292.0, 303.3, 303.8, 315.0, 319.8, 335.4, 353.8, 356.0, 360.8, 368.1, 417.7, 436.7, 445.7, 465.2, 499.4, 520.7] ; Comprehensive list
+  line_centers = [171.1,177.2, 180.4, 195.1, 202.0, 211.3, 368.1, 445.7, 465.2, 499.4, 520.7] ; Selected list of those expected to be dimming sensitive
   intensity = dblarr(n_elements(line_centers), n_elements(instrument.intensity[0, *]))
+  wave_bin_width = instrument.wave[1] - instrument.wave[0]
   FOR i = 0, n_elements(line_centers) - 1 DO BEGIN
     wave_indices = where(instrument.wave GE line_centers[i]-1 and instrument.wave LE line_centers[i]+1, count)
     IF count EQ 0 THEN BEGIN
       message, /INFO, 'Did not find any wavelengths around the emission line center, but should have.'
       STOP
     ENDIF
-    intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN) 
-    ; FIXME: Do I also need to multiply by the bin width since this really _integrating_ over wavelength, not just summing? Bin width is either 1 Å or 0.2 Å, need to check
+    intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN) * wave_bin_width ; [counts]
   ENDFOR
   
   ; Drop final point in time which is always invalid for some reason 
@@ -334,9 +349,63 @@ END
 
 FUNCTION estimate_preflare_baseline, emission_lines
   preflare_baselines = dblarr(n_elements(emission_lines.wave))
+  uncertainty = preflare_baselines
   FOR i = 0, n_elements(emission_lines.intensity[*, 0]) - 1 DO BEGIN
     line = emission_lines.intensity[i, *] 
     preflare_baselines[i] = median(line) ; The simplest possible estimate -- inspected all by eye and they are all reasonable
+    sigmas = cgpercentiles(line, percentiles=[0.159, 0.5, 0.841])
+    uncertainty[i] = mean([sigmas[2] - sigmas[1], sigmas[1] - sigmas[0]])
   ENDFOR
-  return, preflare_baselines
+  return, {intensity:preflare_baselines, uncertainty:uncertainty}
+END
+
+
+FUNCTION get_dimming_depth, emission_lines, preflare_baselines
+  minimum = min(emission_lines.intensity[*, 0:11], dimension=2) ; The 0:11 is because dimming in this example occurred mainly before 2011-02-15T06:15:03Z, which is the 12th index into the array
+  uncertainty = sqrt(minimum) ; [counts]
+  depth = (preflare_baselines - minimum) / preflare_baselines * 100. ; [% from baseline]
+  depth_over_squared_baseline = minimum/(preflare_baselines^2.)
+  return, {depth:depth, depth_over_squared_baseline:depth_over_squared_baseline, uncertainty:uncertainty}
+END
+
+
+FUNCTION combine_lines, emission_lines, num_to_combine
+  combo_indices = combigen(n_elements(emission_lines.wave), num_to_combine)
+  combined_emission_lines = {wave:fltarr(num_to_combine), intensity:fltarr(1, n_elements(emission_lines.jd)), jd:emission_lines.jd, time_iso:emission_lines.time_iso}
+  depths_combo = {wave:fltarr(num_to_combine, n_elements(combo_indices[*, 0])), depth:fltarr(n_elements(combo_indices[*, 0])), uncertainty:fltarr(n_elements(combo_indices[*, 0]))}
+  FOR i = 0, n_elements(combo_indices[*, 0]) - 1 DO BEGIN
+    waves = reform(emission_lines.wave[combo_indices[i, *]])
+    
+    FOR j = 0, num_to_combine - 1 DO BEGIN 
+      combined_emission_lines.intensity += emission_lines.intensity[combo_indices[i, j], *]
+    ENDFOR
+    combined_emission_lines.wave = waves
+    preflare_baseline_combo = estimate_preflare_baseline(combined_emission_lines)
+    depth = get_dimming_depth(combined_emission_lines, preflare_baseline_combo.intensity)
+
+    uncertainty_min = depth.uncertainty
+    uncertainty_baseline = preflare_baseline_combo.uncertainty[0]
+    uncertainty_depth = 100 * sqrt(uncertainty_min^2 * (1/preflare_baseline_combo.intensity)^2 + uncertainty_baseline^2 * depth.depth_over_squared_baseline^2) ; [%]
+
+    depths_combo.wave[*, i] = waves
+    depths_combo.depth[i] = depth.depth
+    depths_combo.uncertainty[i] = uncertainty_depth
+  ENDFOR
+  return, depths_combo
+END
+
+
+FUNCTION plot_dimming_performance, depths, instrument, num_lines_to_combine
+  uncertainty_lower = depths.depth - depths.uncertainty
+  uncertainty_upper = depths.depth + depths.uncertainty
+  ordered_indices = sort(depths.depth)
+  p = plot(depths.depth[ordered_indices], font_size=16, thick=3, $
+            xtitle='index of ' + strtrim(num_lines_to_combine, 2) + '-emission-line combination', $
+            ytitle='dimming depth [%]', yrange=[0, 5], $
+            title='ESCAPE CSR; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /no_decimals) + ' seconds')
+  poly = polygon([findgen(n_elements(ordered_indices)), reverse(findgen(n_elements(ordered_indices)))] , $
+                 [uncertainty_lower[ordered_indices], reverse(uncertainty_upper[ordered_indices])], /DATA, /FILL_BACKGROUND, $
+                 fill_color='light steel blue', transparency=50, linestyle='none')
+  IF num_lines_to_combine EQ 1 THEN p.xtitle = 'index of single emission line'
+  return, p
 END

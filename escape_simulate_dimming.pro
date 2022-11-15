@@ -26,7 +26,7 @@
 ;   num_lines_to_combine [integer]:  The number of emission lines to combine to boost signal. Will perform every combination of emission lines. Default is 5. 
 ;   
 ; KEYWORD PARAMETERS:
-;   None
+;   NO_PLOTS: Set this to disable creation of plots
 ;
 ; OUTPUTS:
 ;   result [anonymous structure]: In order to have a single return, the multiple outputs are contained in this structure with the fields: 
@@ -44,12 +44,13 @@
 ; RESTRICTIONS:
 ;   Requires access to the canonical SDO/EVE dimming curve and ESCAPE effective area files.
 ;   Must be run in the IDLDE due to the way the file with multiple sub-functions is written and then compiled. Else, need to put all the subfunctions in reverse order.
-;   To run, make sure the IDLDE environment is clean by clicking the Reset Session button. Then click Compile button. Then click the Run button.
+;   To run, make sure the IDLDE environment is clean by clicking the Reset Session button. Then click Compile button TWICE. Then click the Run button.
 ;
 ; EXAMPLE:
-;   result = escape_simulate_dimming(distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6)
+;   escape_simulate_dimming, distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6
 ;-
-PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec
+PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
+                             NO_PLOTS=NO_PLOTS
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
@@ -85,22 +86,15 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   euve = count_photons_for_exposure_time(euve, exposure_time_sec)
   
   ; Extract information relevant for dimming and assessment of instrument performance
-  escape_dimming = characterize_dimming(escape, num_lines_to_combine)
-  escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine)
-  euve_dimming = characterize_dimming(euve, num_lines_to_combine)
+  escape_dimming = characterize_dimming(escape, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  euve_dimming = characterize_dimming(euve, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   
-  ; Compare the dimmings results
-  p1 = plot(escape_dimming.time_sec, escape_dimming.snr, thick=2, $ 
-            xtitle='time [sec]', $
-            ytitle='signal/noise', $
-            name='ESCAPE Baseline; $\sigma_{detect}$=' + escape_dimming.sigma_detection)
-  p2 = plot(escape_midex_dimming.time_sec, escape_midex_dimming.snr, thick=2, 'dodger blue', /OVERPLOT, $
-            name='ESCAPE MidEx; $\sigma_{detect}$=' + escape_midex_dimming.sigma_detection)
-  p3 = plot(euve_dimming.time_sec, euve_dimming.snr, thick=2, 'tomato', /OVERPLOT, $
-            name='EUVE; $\sigma_{detect}$=' + euve_dimming.sigma_detection)
-  l = legend(target=[p1, p2, p3], position=[0.9, 0.9])
-  
-  STOP
+  ; List the median values 
+  print, 'exposure time = ' + jpmprintnumber(exposure_time_sec, /NO_DECIMALS) + $
+         ' sec, # lines combined = ' + jpmprintnumber(num_lines_to_combine, /NO_DECIMALS) + $
+         ', median depth = ' + JPMPrintNumber(mean(escape_dimming.depth)) + $
+         '%, median uncertainty = ' + JPMPrintNumber(mean(escape_dimming.uncertainty))
 
 END
 
@@ -277,34 +271,33 @@ FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
 END
 
 
-FUNCTION characterize_dimming, instrument, num_lines_to_combine
+FUNCTION characterize_dimming, instrument, num_lines_to_combine, NO_PLOTS=NO_PLOTS
   emission_lines = extract_emission_lines(instrument)
   preflare_baselines_single_lines = estimate_preflare_baseline(emission_lines)
   depths_single_lines = get_dimming_depth(emission_lines, preflare_baselines_single_lines.intensity)
   depths_combo_lines = combine_lines(emission_lines, num_lines_to_combine)
+  ; TODO: slopes
   
-  p1 = plot_dimming_performance(depths_single_lines, instrument, 1)
-  p_multi = plot_dimming_performance(depths_combo_lines, instrument, num_lines_to_combine)
+  
+  IF ~keyword_set(NO_PLOTS) THEN BEGIN
+    p1 = plot_dimming_performance(depths_single_lines, instrument, 1)
+    p_multi = plot_dimming_performance(depths_combo_lines, instrument, num_lines_to_combine)
+  ENDIF
+  
 
-  STOP
-  
-
   
   
-  ; Example plot of light curve
-  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3))
-  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN) * 0.2 ; [counts] -- 0.2 is the EVE wavelength bin width
-
-  ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
-  w = window(location=[2735, 0], dimensions=[650, 400])
-  p1 = errorplot(emission_lines.jd, intensity_171_174[0:-2], sqrt(intensity_171_174[0:-2]), thick=2, xtickunits='time', /CURRENT, $
-                 title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
-                 xtitle='hours', $
-                 ytitle='intensity [counts]')
-                 
-  STOP
-  
-  
+;  ; Example plot of light curve
+;  wave_171_174_indices = where((instrument.wave GE 170.1 AND instrument.wave LE 172.1) OR (instrument.wave GE 174.3 AND instrument.wave LE 176.3))
+;  intensity_171_174 = total(instrument.intensity[wave_171_174_indices, *], 1, /NAN) * 0.2 ; [counts] -- 0.2 is the EVE wavelength bin width
+;
+;  ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
+;  w = window(location=[2735, 0], dimensions=[650, 400])
+;  p1 = errorplot(emission_lines.jd, intensity_171_174[0:-2], sqrt(intensity_171_174[0:-2]), thick=2, xtickunits='time', /CURRENT, $
+;                 title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
+;                 xtitle='hours', $
+;                 ytitle='171+174 Å intensity [counts]')
+;  p2 = plot(p1.xrange, [median(intensity_171_174), median(intensity_171_174)], '--', thick=4, color='dodger blue', /OVERPLOT)
   
   
 ;  ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
@@ -316,7 +309,10 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine
 ;  
 ;  STOP ; TODO: This is a temporary plot that needs to be checked -- really what I want to see?
   
-  dimming = -1
+  ; TODO: combine depths and slopes into single structure
+  ; dimming = {depths, slopes} or whatever
+  
+  dimming = depths_combo_lines
   return, dimming
 END
 

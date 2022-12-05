@@ -376,11 +376,23 @@ END
 
 
 FUNCTION get_dimming_depth, emission_lines, preflare_baselines
-  minimum = min(emission_lines.intensity[*, 0:11], dimension=2) ; The 0:11 is because dimming in this example occurred mainly before 2011-02-15T06:15:03Z, which is the 12th index into the array
-  uncertainty_min = sqrt(minimum) ; [counts]
-  depth = (preflare_baselines.intensity - minimum) / preflare_baselines.intensity * 100. ; [% from baseline]
-  depth_over_squared_baseline = minimum/(preflare_baselines.intensity^2.)
-  uncertainty_depth = 100 * sqrt(uncertainty_min^2 * (1/preflare_baselines.intensity)^2 + preflare_baselines.uncertainty^2 * depth_over_squared_baseline^2) ; [%]
+  times_to_search_for_dimming_indices = where(emission_lines.jd LE jpmiso2jd('2011-02-15T10:00:00Z'))
+  minimum = min(emission_lines.intensity[*, times_to_search_for_dimming_indices], dimension=2)
+  baselines = median(emission_lines.intensity, dimension=2)
+  mid_point = (baselines - minimum) / 2. + minimum
+  
+  FOR i = 0, n_elements(emission_lines.intensity[*, 0]) - 1 DO BEGIN ; loop over wavelengths
+    light_curve = emission_lines.intensity[i, times_to_search_for_dimming_indices]
+    depth_point_indices = where(light_curve LE mid_point[i])
+    depth_point_indices = times_to_search_for_dimming_indices[depth_point_indices]
+    weighted_minimum = wmean(emission_lines.intensity[i, depth_point_indices], sqrt(emission_lines.intensity[i, depth_point_indices]), error=uncertainty_weighted_minimum)
+    weighted_minimums = (n_elements(weighted_minimums) EQ 0) ? weighted_minimum : [weighted_minimums, weighted_minimum]
+    uncertainty_weighted_minimums = (n_elements(uncertainty_weighted_minimums) EQ 0) ? uncertainty_weighted_minimum : [uncertainty_weighted_minimums, uncertainty_weighted_minimum]
+  ENDFOR
+  
+  depth = (preflare_baselines.intensity - weighted_minimums) / preflare_baselines.intensity * 100. ; [% from baseline]
+  depth_over_squared_baseline = weighted_minimums/(preflare_baselines.intensity^2.)
+  uncertainty_depth = 100 * sqrt(uncertainty_weighted_minimums^2 * (1/preflare_baselines.intensity)^2 + preflare_baselines.uncertainty^2 * depth_over_squared_baseline^2) ; [%]
   return, {depth:depth, uncertainty:uncertainty_depth}
 END
 

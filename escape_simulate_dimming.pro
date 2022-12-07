@@ -39,7 +39,10 @@
 ;   Plots to screen of the simulated light curve. 
 ;
 ; OPTIONAL OUTPUTS:
-;   None
+;   escape_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
+;   escape_midex_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
+;   escape_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
+;   
 ;
 ; RESTRICTIONS:
 ;   Requires access to the canonical SDO/EVE dimming curve and ESCAPE effective area files.
@@ -50,7 +53,8 @@
 ;   escape_simulate_dimming, distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6
 ;-
 PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
-                             NO_PLOTS=NO_PLOTS
+                             NO_PLOTS=NO_PLOTS, $ 
+                             escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
@@ -98,12 +102,20 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;euve_dimming = characterize_dimming(euve, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   
-  ; Describe detection performance
-  escape_detection = print_detection_performance(escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  escape_midex_detection = print_detection_performance(escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  ;euve_detection = print_detection_performance(euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ; Determine which line combination provided the best detection of the dimming
+  escape_detection = get_best_detection(escape_dimming, NO_PLOTS=NO_PLOTS)
+  escape_midex_detection = get_best_detection(escape_midex_dimming, NO_PLOTS=NO_PLOTS)
+  ;euve_detection = get_best_detection(euve_dimming, NO_PLOTS=NO_PLOTS)
   
-
+  ; Optional outputs
+  escape_detection_output = escape_detection
+  escape_midex_detection_output = escape_midex_detection
+  ;euve_detection_output = euve_detection
+  
+  ; Describe detection performance
+  escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ;euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
 END
 
 
@@ -444,18 +456,21 @@ FUNCTION plot_dimming_performance, depths, instrument, num_lines_to_combine
 END
 
 
-FUNCTION print_detection_performance, instrument_dimming, instrument, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
-  
+FUNCTION get_best_detection, instrument_dimming, NO_PLOTS=NO_PLOTS
   detection_ratio = instrument_dimming.depth /  instrument_dimming.uncertainty
   best_detection = max(detection_ratio, index)
   best_detection_wavelength_combo = ''
   FOREACH wave, instrument_dimming.wave[*, index] DO BEGIN
     best_detection_wavelength_combo += (JPMPrintNumber(wave, /NO_DECIMALS) + 'Å ')
   ENDFOREACH
-  
+  return, {name:instrument_dimming.name, best_detection:best_detection, best_detection_wavelength_combo:best_detection_wavelength_combo, detection_ratio:detection_ratio}
+END
+
+
+FUNCTION print_detection_performance, instrument_detection, instrument_dimming, instrument, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS  
   IF ~keyword_set(NO_PLOTS) THEN BEGIN
     ordered_indices = sort(instrument_dimming.depth)
-    p = plot(detection_ratio[ordered_indices], thick=3, font_size=16, $
+    p = plot(instrument_detection.detection_ratio[ordered_indices], thick=3, font_size=16, $
              title=instrument.name + ' Dimming performance', $
              xtitle='index of ' + jpmprintnumber(num_lines_to_combine, /NO_DECIMALS) + '-emission line combination', $
              ytitle='$\sigma$ detection (depth/uncertainty)')
@@ -466,6 +481,7 @@ FUNCTION print_detection_performance, instrument_dimming, instrument, exposure_t
          ' sec, # lines combined = ' + jpmprintnumber(num_lines_to_combine, /NO_DECIMALS) + $
          ', median depth = ' + JPMPrintNumber(median(instrument_dimming.depth)) + $
          '%, median uncertainty = ' + JPMPrintNumber(median(instrument_dimming.uncertainty)) + $ 
-         ', best detection (depth/uncertainty) = ' + JPMPrintNumber(best_detection), + $ 
-         ' for line combo: ' + best_detection_wavelength_combo
+         ', best detection (depth/uncertainty) = ' + JPMPrintNumber(instrument_detection.best_detection), + $ 
+         ' for line combo: ' + instrument_detection.best_detection_wavelength_combo
 END
+

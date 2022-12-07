@@ -62,6 +62,14 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
   saveloc = '~/Dropbox/Research/ResearchScientist_APL/Analysis/ESCAPE Dimming Analysis/'
   
+  ; Ensure that inputs are right type
+  distance_pc = float(distance_pc)
+  column_density = double(column_density)
+  coronal_temperature_k = float(coronal_temperature_k)
+  expected_bg_event_ratio = float(expected_bg_event_ratio)
+  exposure_time_sec = float(exposure_time_sec)
+  num_lines_to_combine = fix(num_lines_to_combine)
+  
   ; Tuneable parameters
   escape_bandpass_min = 90 ; [Å] shortest wavelength in the main ESCAPE bandpass
   escape_bandpass_max = 800 ; [Å] longest ""  
@@ -109,20 +117,18 @@ FUNCTION read_eve, dataloc, escape_bandpass_min, escape_bandpass_max
   jd = jpmrange(jd[0], jd[-1], npts=n_elements(jd))
   time_iso = jpmjd2iso(jd)
   
-  ; AAY: testing changing the spectral sampling here
-;  wave_new = jpmrange(wave[0], wave[-1], inc=0.5)
-;  irradiance_new = fltarr(n_elements(wave_new), n_elements(jd))
-;  FOR i = 0, n_elements(jd) - 1 DO BEGIN
-;    irradiance_new[*, i] = interpol(irradiance[*, i], wave, wave_new)
-;  ENDFOR
-;  irradiance = irradiance_new
-;  wave = wave_new
-  
-  
   ; Truncate EVE wavelength to just the main ESCAPE band
   trunc_indices = where(wave GE escape_bandpass_min AND wave LE escape_bandpass_max)
   wave = wave[trunc_indices]
   irradiance = irradiance[trunc_indices, *] ; [W/m2/nm] = [J/s/m2/nm]
+  
+  ; Replace -1 bad data flag
+  FOR i = 0, n_elements(wave) - 1 DO BEGIN
+    bad_indices = where(irradiance[i, *] EQ -1, count, complement=good_indices)
+    IF count GT 0 THEN BEGIN
+      irradiance[i, bad_indices] = median(irradiance[i, good_indices]) ; fill with median of light curve
+    ENDIF
+  ENDFOR
   
   ; Change irradiance units for consistency with ESCAPE
   J2erg = 1d7 
@@ -269,7 +275,7 @@ FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
   WHILE t_step LT max(t_sec) DO BEGIN
     exposure_interval_indices = where(t_sec GE t_step AND t_sec LT (t_step + exposure_time_sec), count)
     IF count EQ 0 THEN message, /INFO, 'Uh oh. No times found in exposure interval.'
-    intensity_exposures[*, i] = (total(instrument.intensity[*, exposure_interval_indices], 2)) * eve_time_binning ; [counts/Å]
+    intensity_exposures[*, i] = (total(instrument.intensity[*, exposure_interval_indices], 2, /NAN)) * eve_time_binning ; [counts/Å]
 
     ; new center time
     jd_centers[i] = instrument.jd[exposure_interval_indices[n_elements(exposure_interval_indices)/2]] ; Note: if there's not an odd number of times, this will grab the available time just to the left of true center
@@ -359,7 +365,7 @@ FUNCTION estimate_preflare_baseline, emission_lines
   uncertainty = preflare_baselines
   
   jd = emission_lines.jd
-  indices_to_median = where(jd LE jpmiso2jd('2011-02-15T02:00:00') OR (jd GE jpmiso2jd('2011-02-15T09:30:00') AND jd LE jpmiso2jd('2011-02-15T15:30:00')))
+  indices_to_median = where(jd LE jpmiso2jd('2011-08-04T04:00:00'))
   
   FOR i = 0, n_elements(emission_lines.intensity[*, 0]) - 1 DO BEGIN
     line = emission_lines.intensity[i, indices_to_median] 
@@ -376,7 +382,7 @@ END
 
 
 FUNCTION get_dimming_depth, emission_lines, preflare_baselines
-  times_to_search_for_dimming_indices = where(emission_lines.jd LE jpmiso2jd('2011-02-15T10:00:00Z'))
+  times_to_search_for_dimming_indices = where(emission_lines.jd LE jpmiso2jd('2011-08-04T18:00:00Z'))
   minimum = min(emission_lines.intensity[*, times_to_search_for_dimming_indices], dimension=2)
   baselines = median(emission_lines.intensity, dimension=2)
   mid_point = (baselines - minimum) / 2. + minimum

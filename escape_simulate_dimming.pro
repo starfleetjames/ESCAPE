@@ -12,7 +12,7 @@
 ; OPTIONAL INPUTS:
 ;   distance_pc [float]:             How many parsecs distant is this star in units of parsecs? 
 ;                                    Default is 6 (CSR limit for solar type stars in DEEP survey). 
-;   column_density [float]:          How much ISM attenuation to apply. 
+;   column_density [double]:         How much ISM attenuation to apply. 
 ;                                    Default 1d18 (a typical value for very near ISM)
 ;   coronal_temperature_k [float]:   The temperature of the corona of the star. If set to 1e6 (solar value) nothing is done. 
 ;                                    If >1e6, then a scaling is applied, shifting the amount of dimming from 1e6 K-sensitive lines toward this values emissions lines (if any). 
@@ -39,6 +39,9 @@
 ;   Plots to screen of the simulated light curve. 
 ;
 ; OPTIONAL OUTPUTS:
+;   escape_dimming_output [anonymous structure]: Contains the dimming parameterizations
+;   escape_midex_dimming_output [anonymous structure]: Contains the dimming parameterizations
+;   euve_dimming_output [anonymous structure]: Contains the dimming parameterizations
 ;   escape_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
 ;   escape_midex_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
 ;   escape_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
@@ -54,7 +57,7 @@
 ;-
 PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
                              NO_PLOTS=NO_PLOTS, $ 
-                             escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output
+                             escape_dimming_output=escape_dimming_output, escape_midex_dimming_output=escape_midex_dimming_output, euve_dimming_output=euve_dimming_output, escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
@@ -108,6 +111,9 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   ;euve_detection = get_best_detection(euve_dimming, NO_PLOTS=NO_PLOTS)
   
   ; Optional outputs
+  escape_dimming_output = escape_dimming
+  escape_midex_dimming_output = escape_midex_dimming
+  ;euve_dimming_output = euve_dimming
   escape_detection_output = escape_detection
   escape_midex_detection_output = escape_midex_detection
   ;euve_detection_output = euve_detection
@@ -116,6 +122,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  
 END
 
 
@@ -368,7 +375,7 @@ FUNCTION extract_emission_lines, instrument
   time_iso = instrument.time_iso[0:-2]
   intensity = intensity[*, 0:-2]
   
-  return, {emission_lines, wave:line_centers, intensity:intensity, jd:jd, time_iso:time_iso} 
+  return, {wave:line_centers, intensity:intensity, jd:jd, time_iso:time_iso} 
 END
 
 
@@ -484,4 +491,3 @@ FUNCTION print_detection_performance, instrument_detection, instrument_dimming, 
          ', best detection (depth/uncertainty) = ' + JPMPrintNumber(instrument_detection.best_detection), + $ 
          ' for line combo: ' + instrument_detection.best_detection_wavelength_combo
 END
-

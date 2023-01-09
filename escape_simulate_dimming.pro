@@ -14,6 +14,9 @@
 ;                                    Default is 6 (CSR limit for solar type stars in DEEP survey). 
 ;   column_density [double]:         How much ISM attenuation to apply. 
 ;                                    Default 1d18 (a typical value for very near ISM)
+;   luminosity_scaling [float]:      Turns out that actual observations of sun-like stars often show that they are _brighter_ than assuming a simple 1/r2 scaling and ISM attenuation. 
+;                                    This parameter allows the user to scale up the luminosity. This should be done with care, likely based on observed X-ray luminosities for particular stars.
+;                                    Default value is 1.0 (i.e, no scaling). 
 ;   coronal_temperature_k [float]:   The temperature of the corona of the star. If set to 1e6 (solar value) nothing is done. 
 ;                                    If >1e6, then a scaling is applied, shifting the amount of dimming from 1e6 K-sensitive lines toward this values emissions lines (if any). 
 ;                                    Default is 1e6 (solar value). 
@@ -55,13 +58,14 @@
 ; EXAMPLE:
 ;   escape_simulate_dimming, distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6
 ;-
-PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
+PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, luminosity_scaling=luminosity_scaling, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
                              NO_PLOTS=NO_PLOTS, $ 
                              escape_dimming_output=escape_dimming_output, escape_midex_dimming_output=escape_midex_dimming_output, euve_dimming_output=euve_dimming_output, escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
   IF column_density EQ !NULL THEN column_density = 1d18
+  IF luminosity_scaling EQ !NULL THEN luminosity_scaling = 1.0
   IF coronal_temperature_k EQ !NULL THEN coronal_temperature_k = 1e6
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
   IF exposure_time_sec EQ !NULL THEN exposure_time_sec = 1800.
@@ -72,6 +76,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   ; Ensure that inputs are right type
   distance_pc = float(distance_pc)
   column_density = double(column_density)
+  luminosity_scaling = float(luminosity_scaling)
   coronal_temperature_k = float(coronal_temperature_k)
   expected_bg_event_ratio = float(expected_bg_event_ratio)
   exposure_time_sec = float(exposure_time_sec)
@@ -88,7 +93,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   ;euve = read_euve(dataloc)
   
   ; Apply scalings to EVE data to make it look like observations of another star 
-  eve_stellar = scale_eve(dataloc, eve, distance_pc, column_density, coronal_temperature_k, expected_bg_event_ratio)
+  eve_stellar = scale_eve(dataloc, eve, distance_pc, column_density, luminosity_scaling, coronal_temperature_k, expected_bg_event_ratio)
 
   ; Fold stellar-simulated EVE data through effective areas (function adds intensity variable to the structure)
   escape = apply_effective_area(eve_stellar, escape)
@@ -229,9 +234,10 @@ FUNCTION read_euve, dataloc
 END
 
 
-FUNCTION scale_eve, dataloc, eve, distance_pc, column_density, coronal_temperature_k, expected_bg_event_ratio
+FUNCTION scale_eve, dataloc, eve, distance_pc, column_density, luminosity_scaling, coronal_temperature_k, expected_bg_event_ratio
   eve_stellar = scale_eve_for_distance(eve, distance_pc)
   eve_stellar = scale_eve_for_attenuation(dataloc, eve_stellar, column_density)
+  eve_stellar = scale_eve_luminosity(eve_stellar, luminosity_scaling)
   eve_stellar = scale_eve_for_temperature(eve_stellar, coronal_temperature_k)
   eve_stellar = scale_eve_for_event_magnitude(eve_stellar, expected_bg_event_ratio)
   return, eve_stellar
@@ -253,6 +259,12 @@ FUNCTION scale_eve_for_attenuation, dataloc, eve_stellar, column_density
                      dataloc_heI=dataloc+'atomic_data/', dataloc_h1=dataloc+'atomic_data/')
   transmittance = interpol(ism.transmittance, ism.wave, eve_stellar.wave)
   eve_stellar.irrad *= transmittance
+  return, eve_stellar
+END
+
+
+FUNCTION scale_eve_luminosity, eve_stellar, luminosity_scaling
+  eve_stellar.irrad *= luminosity_scaling
   return, eve_stellar
 END
 

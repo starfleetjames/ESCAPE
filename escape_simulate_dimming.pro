@@ -323,13 +323,18 @@ END
 
 FUNCTION characterize_dimming, instrument, num_lines_to_combine, saveloc=saveloc, NO_PLOTS=NO_PLOTS
   emission_lines = extract_emission_lines(instrument)
+  flare_only_line = extract_284_correction_line(emission_lines, new_emission_lines=emission_lines)
   combined_lines = combine_lines(emission_lines, num_lines_to_combine)
   
   preflare_baselines_single_lines = estimate_preflare_baseline(emission_lines)
+  preflare_baseline_flare_only_line = estimate_preflare_baseline(flare_only_line)
   preflare_baselines_combo_lines = estimate_preflare_baseline(combined_lines)
   
-  depths_single_lines = get_dimming_depth(emission_lines, preflare_baselines_single_lines)
-  depths_combo_lines = get_dimming_depth(combined_lines, preflare_baselines_combo_lines)
+  emission_lines_flare_deconvolved = deconvolve_flare(emission_lines, flare_only_line, preflare_baselines_single_lines, preflare_baseline_flare_only_line)
+  combined_lines_flare_deconvolved = deconvolve_flare(combined_lines, flare_only_line, preflare_baselines_combo_lines, preflare_baseline_flare_only_line)
+  
+  depths_single_lines = get_dimming_depth(emission_lines_flare_deconvolved, preflare_baselines_single_lines)
+  depths_combo_lines = get_dimming_depth(combined_lines_flare_deconvolved, preflare_baselines_combo_lines)
   
   ; TODO: slopes
   
@@ -378,6 +383,7 @@ FUNCTION extract_emission_lines, instrument
 ;                 196.5, 202.0, 203.8, 203.8, 211.3, 217.1, 219.1, 221.8, 244.9, 252.0, 255.1, 256.7, 258.4, 263.0, 264.8, 270.5, 274.2, $
 ;                 284.2, 292.0, 303.3, 303.8, 315.0, 319.8, 335.4, 353.8, 356.0, 360.8, 368.1, 417.7, 436.7, 445.7, 465.2, 499.4, 520.7] ; Comprehensive list
   line_centers = [171.1, 177.2, 180.4, 195.1, 202.0, 211.3, 368.1, 445.7, 465.2] ; Selected list of those expected to be dimming sensitive
+  line_centers = [line_centers, 284.2] ; Line for doing flare-interference correction
   intensity = dblarr(n_elements(line_centers), n_elements(instrument.intensity[0, *]))
   wave_bin_width = instrument.wave[1] - instrument.wave[0]
   FOR i = 0, n_elements(line_centers) - 1 DO BEGIN
@@ -398,15 +404,30 @@ FUNCTION extract_emission_lines, instrument
 END
 
 
+FUNCTION extract_284_correction_line, emission_lines, new_emission_lines=new_emission_lines
+  index_284 = where(emission_lines.wave EQ '284.2', count, complement=indices_non_284)
+  IF count GT 0 THEN BEGIN
+    intensity_284 = reform(emission_lines.intensity[index_284, *])
+    wave = emission_lines.wave[index_284]
+    emission_line_284 = {wave:wave, intensity:intensity_284, jd:emission_lines.jd, time_iso:emission_lines.time_iso}
+  ENDIF ELSE BEGIN
+    emission_line_284 = !VALUES.F_NAN
+  ENDELSE
+  
+  intensity = emission_lines.intensity[indices_non_284, *]
+  wave = emission_lines.wave[indices_non_284]
+  new_emission_lines = {wave:wave, intensity:intensity, jd:emission_lines.jd, time_iso:emission_lines.time_iso}
+  return, emission_line_284
+END
+
+
 FUNCTION combine_lines, emission_lines, num_to_combine
   combo_indices = combigen(n_elements(emission_lines.wave), num_to_combine)
   num_combinations = n_elements(combo_indices[*, 0])
   combined_emission_lines = {wave:fltarr(num_combinations, num_to_combine), intensity:fltarr(num_combinations, n_elements(emission_lines.jd)), jd:emission_lines.jd, time_iso:emission_lines.time_iso}
 
   FOR i = 0, num_combinations - 1 DO BEGIN
-    ;combined_emission_lines.intensity[i, *] = 0
     combined_emission_lines.wave[i, *] = reform(emission_lines.wave[combo_indices[i, *]])
-
     FOR j = 0, num_to_combine - 1 DO BEGIN
       combined_emission_lines.intensity[i, *] += reform(emission_lines.intensity[combo_indices[i, j], *])
     ENDFOR
@@ -415,8 +436,63 @@ FUNCTION combine_lines, emission_lines, num_to_combine
 END
 
 
+FUNCTION deconvolve_flare, emission_lines, flare_line, preflare_baselines, preflare_baseline_flare_only_line
+  IF size(emission_lines.wave, /N_DIMENSIONS) EQ 1 THEN BEGIN
+    num_lines = n_elements(emission_lines.wave)
+  ENDIF ELSE BEGIN
+    num_lines = n_elements(emission_lines.wave[*, 0])
+  ENDELSE
+  
+  flare_line = convert_counts_to_percent_change(flare_line, preflare_baseline_flare_only_line)
+  flare_line_peak = get_flare_peak(flare_line, index_output=flare_line_peak_index)
+  
+  intensities_deconvolved = emission_lines.intensity
+  intensities_deconvolved[*, *] = 0
+  FOR i = 0, num_lines - 1 DO BEGIN
+    emission_line = {wave:emission_lines.wave[i], intensity:reform(emission_lines.intensity[i, *]), jd:emission_lines.jd, time_iso:emission_lines.time_iso}
+    preflare_baseline = {wave:preflare_baselines.wave[i], intensity:preflare_baselines.intensity[i], time_indices_used:preflare_baselines.time_indices_used, uncertainty:preflare_baselines.uncertainty}
+    emission_line = convert_counts_to_percent_change(emission_line, preflare_baseline)
+    emission_line_peak = get_flare_peak(emission_line, index_output=emission_line_peak_index)
+    scaling_factor = emission_line_peak / flare_line_peak
+    flare_light_curve_scaled = flare_line.intensity_percent * scaling_factor
+    flare_light_curve_scaled_and_shifted = shift(flare_light_curve_scaled, (emission_line_peak_index - flare_line_peak_index))
+    
+    light_curve_deconvolved = reform(emission_line.intensity_percent - flare_light_curve_scaled_and_shifted)
+    intensities_deconvolved[i, *] = convert_percent_change_to_counts(light_curve_deconvolved, preflare_baseline.intensity)
+  ENDFOR
+  
+  new_wave_names = strtrim(emission_lines.wave, 2) + ' - 284.20'
+  
+  return, {intensity:intensities_deconvolved, jd:emission_lines.jd, time_iso:emission_lines.time_iso, wave:new_wave_names}
+END
+
+
+FUNCTION convert_counts_to_percent_change, emission_line, preflare_baseline
+  intensity_percent = (emission_line.intensity - preflare_baseline.intensity) / preflare_baseline.intensity * 100.
+  return, {intensity:emission_line.intensity, intensity_percent:intensity_percent, jd:emission_line.jd, time_iso:emission_line.time_iso, wave:emission_line.wave}
+END
+
+
+FUNCTION convert_percent_change_to_counts, intensity, preflare_baseline_intensity
+  return, (intensity / 100. * preflare_baseline_intensity) + preflare_baseline_intensity
+END
+
+
+FUNCTION get_flare_peak, emission_line, index_output=index_output
+  t_hours = (emission_line.jd - emission_line.jd[0]) * 24.
+  flare_search_indices = where(t_hours LT 10)
+  flare_peak = max(emission_line.intensity_percent[flare_search_indices], index)
+  index_output = flare_search_indices[index]
+  return, flare_peak
+END
+
+
 FUNCTION estimate_preflare_baseline, emission_lines
-  num_lines = n_elements(emission_lines.intensity[*, 0])
+  IF size(emission_lines.wave, /N_DIMENSIONS) EQ 1 THEN BEGIN 
+    num_lines = n_elements(emission_lines.wave)
+  ENDIF ELSE BEGIN
+    num_lines = n_elements(emission_lines.wave[*, 0])
+  ENDELSE
   preflare_baselines = dblarr(num_lines)
   uncertainty = preflare_baselines
   
@@ -433,7 +509,7 @@ FUNCTION estimate_preflare_baseline, emission_lines
     preflare_baselines = preflare_baselines[0]
     uncertainty = uncertainty[0]
   ENDIF
-  return, {intensity:preflare_baselines, uncertainty:uncertainty, time_indices_used:indices_to_median}
+  return, {intensity:preflare_baselines, uncertainty:uncertainty, time_indices_used:indices_to_median, wave:emission_lines.wave}
 END
 
 

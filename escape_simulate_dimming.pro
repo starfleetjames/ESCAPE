@@ -333,7 +333,6 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine, saveloc=saveloc
   
   ; TODO: slopes
   
-  ; TODO: combine depths and slopes into single structure
   dimming = JPMAddTagsToStructure(depths_combo_lines, 'name', 'string')
   dimming.name = instrument.name
   
@@ -378,7 +377,7 @@ FUNCTION extract_emission_lines, instrument
 ;                 175.3, 177.2, 179.8, 180.4, 182.2, 184.5, 184.8, 185.2, 186.6, 186.9, 186.9, 188.2, 188.3, 192.0, 192.4, 193.5, 195.1, $
 ;                 196.5, 202.0, 203.8, 203.8, 211.3, 217.1, 219.1, 221.8, 244.9, 252.0, 255.1, 256.7, 258.4, 263.0, 264.8, 270.5, 274.2, $
 ;                 284.2, 292.0, 303.3, 303.8, 315.0, 319.8, 335.4, 353.8, 356.0, 360.8, 368.1, 417.7, 436.7, 445.7, 465.2, 499.4, 520.7] ; Comprehensive list
-  line_centers = [171.1, 177.2, 180.4, 195.1, 202.0, 211.3, 368.1, 445.7, 465.2, 499.4, 520.7] ; Selected list of those expected to be dimming sensitive
+  line_centers = [171.1, 177.2, 180.4, 195.1, 202.0, 211.3, 368.1, 445.7, 465.2] ; Selected list of those expected to be dimming sensitive
   intensity = dblarr(n_elements(line_centers), n_elements(instrument.intensity[0, *]))
   wave_bin_width = instrument.wave[1] - instrument.wave[0]
   FOR i = 0, n_elements(line_centers) - 1 DO BEGIN

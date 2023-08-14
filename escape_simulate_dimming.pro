@@ -64,7 +64,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
-  IF column_density EQ !NULL THEN column_density = 1d18
+  IF column_density EQ !NULL THEN column_density = 18.
   IF luminosity_scaling EQ !NULL THEN luminosity_scaling = 1.0
   IF coronal_temperature_k EQ !NULL THEN coronal_temperature_k = 1e6
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
@@ -89,7 +89,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   ; Read data
   eve = read_eve(dataloc, escape_bandpass_min, escape_bandpass_max)
   escape = read_escape(dataloc)
-  escape_midex = read_escape_midex(dataloc)
+  ;escape_midex = read_escape_midex(dataloc)
   ;euve = read_euve(dataloc)
   
   ; Apply scalings to EVE data to make it look like observations of another star 
@@ -97,35 +97,35 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
 
   ; Fold stellar-simulated EVE data through effective areas (function adds intensity variable to the structure)
   escape = apply_effective_area(eve_stellar, escape)
-  escape_midex = apply_effective_area(eve_stellar, escape_midex)
+  ;escape_midex = apply_effective_area(eve_stellar, escape_midex)
   ;euve = apply_effective_area(eve_stellar, euve)
   
   ; Account for exposure time
   escape = count_photons_for_exposure_time(escape, exposure_time_sec)
-  escape_midex = count_photons_for_exposure_time(escape_midex, exposure_time_sec)
+  ;escape_midex = count_photons_for_exposure_time(escape_midex, exposure_time_sec)
   ;euve = count_photons_for_exposure_time(euve, exposure_time_sec)
   
   ; Extract information relevant for dimming and assessment of instrument performance
   escape_dimming = characterize_dimming(escape, num_lines_to_combine, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
-  escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
+  ;escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
   ;euve_dimming = characterize_dimming(euve, num_lines_to_combine, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
   
   ; Determine which line combination provided the best detection of the dimming
-  escape_detection = get_best_detection(escape_dimming, NO_PLOTS=NO_PLOTS)
-  escape_midex_detection = get_best_detection(escape_midex_dimming,  NO_PLOTS=NO_PLOTS)
-  ;euve_detection = get_best_detection(euve_dimming, NO_PLOTS=NO_PLOTS)
+  escape_detection = get_best_detection(escape_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ;escape_midex_detection = get_best_detection(escape_midex_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ;euve_detection = get_best_detection(euve_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   
   ; Optional outputs
   escape_dimming_output = escape_dimming
-  escape_midex_dimming_output = escape_midex_dimming
+  ;escape_midex_dimming_output = escape_midex_dimming
   ;euve_dimming_output = euve_dimming
   escape_detection_output = escape_detection
-  escape_midex_detection_output = escape_midex_detection
+  ;escape_midex_detection_output = escape_midex_detection
   ;euve_detection_output = euve_detection
   
   ; Describe detection performance
   escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ;escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   
 END
@@ -325,22 +325,29 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine, saveloc=saveloc
   emission_lines = extract_emission_lines(instrument)
   flare_only_line = extract_284_correction_line(emission_lines, new_emission_lines=emission_lines)
   combined_lines = combine_lines(emission_lines, num_lines_to_combine)
+  bands = extract_bands(instrument)
   
   preflare_baselines_single_lines = estimate_preflare_baseline(emission_lines)
   preflare_baseline_flare_only_line = estimate_preflare_baseline(flare_only_line)
   preflare_baselines_combo_lines = estimate_preflare_baseline(combined_lines)
+  preflare_baselines_bands = estimate_preflare_baseline(bands)
   
   emission_lines_flare_deconvolved = deconvolve_flare(emission_lines, flare_only_line, preflare_baselines_single_lines, preflare_baseline_flare_only_line)
   combined_lines_flare_deconvolved = deconvolve_flare(combined_lines, flare_only_line, preflare_baselines_combo_lines, preflare_baseline_flare_only_line)
+  bands_flare_deconvolved = deconvolve_flare(bands, flare_only_line, preflare_baselines_bands, preflare_baseline_flare_only_line)
   
   depths_single_lines = get_dimming_depth(emission_lines_flare_deconvolved, preflare_baselines_single_lines)
   depths_combo_lines = get_dimming_depth(combined_lines_flare_deconvolved, preflare_baselines_combo_lines)
+  depths_bands = get_dimming_depth(bands_flare_deconvolved, preflare_baselines_bands)
   
   ; TODO: slopes
   
-  dimming = JPMAddTagsToStructure(depths_combo_lines, 'name', 'string')
-  dimming.name = instrument.name
-  
+  dimming_single_lines = JPMAddTagsToStructure(depths_single_lines, 'name', 'string')
+  dimming_single_lines.name = instrument.name
+  dimming_combo_lines = JPMAddTagsToStructure(depths_combo_lines, 'name', 'string')
+  dimming_combo_lines.name = instrument.name
+  dimming_bands = JPMAddTagsToStructure(depths_bands, 'name', 'string')
+  dimming_bands.name = instrument.name
   
   IF ~keyword_set(NO_PLOTS) THEN BEGIN
     p1 = plot_dimming_performance(depths_single_lines, instrument, 1)
@@ -349,31 +356,22 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine, saveloc=saveloc
                    title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds', $
                    xtitle='hours', $
                    ytitle='intensity [counts]')
-        
-    ; Find the light curve with the best detection and store it for plotting
-    best_detection = get_best_detection(dimming)
-    light_curve = reform(combined_lines.intensity[best_detection.index, *])
-    preflare_baseline = preflare_baselines_combo_lines.intensity[best_detection.index]
-    time_hours = (combined_lines.jd - combined_lines.jd[0]) * 24.
-    
-    ; Get the associated dimming depth time window for annotation
-    depth_window_indices = get_depth_window_indices(dimming, best_detection)
-    preflare_window_indices = preflare_baselines_combo_lines.time_indices_used
-    
-    ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
-    w = window(location=[2735, 0], dimensions=[650, 400])
-    p1 = errorplot(time_hours, light_curve, sqrt(light_curve), thick=2, /CURRENT, $
-                   title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds; best detection', $
-                   xtitle='hours', $
-                   ytitle=best_detection.best_detection_wavelength_combo + ' summed intensity [counts]')
-    p2 = plot(time_hours[depth_window_indices], light_curve[depth_window_indices], 'tomato', thick=2, /OVERPLOT, name='used for depth calc')
-    p3 = plot(time_hours[preflare_window_indices], light_curve[preflare_window_indices], 'dodger blue', thick=2, /OVERPLOT, name='used for baseline calc')
-    p4 = plot(p1.xrange, [preflare_baseline, preflare_baseline], '--', thick=4, color='dodger blue', /OVERPLOT, name='baseline')
-    l1 = legend(target=[p2, p3, p4], position = [0.43, 0.85])
-    p1.save, saveloc + 'Best Detection Light Curves/' + instrument.name + ' Best Detection Light Curve.png'
+    p3 = plot_best_detection_light_curve(dimming_single_lines, emission_lines, preflare_baselines_single_lines, instrument, num_lines_to_combine, saveloc=saveloc)
+    p4 = plot_best_detection_light_curve(dimming_combo_lines, combined_lines, preflare_baselines_combo_lines, instrument, num_lines_to_combine, saveloc=saveloc)
+    p5 = plot_best_detection_light_curve(dimming_bands, bands, preflare_baselines_bands, instrument, num_lines_to_combine, saveloc=saveloc)
   ENDIF
-
-  return, dimming
+  
+  best_single = get_best_detection(dimming_single_lines, num_lines_to_combine)
+  best_combo = get_best_detection(dimming_combo_lines, num_lines_to_combine)
+  best_bands = get_best_detection(dimming_bands, num_lines_to_combine)
+  
+  IF best_single.best_detection GT best_combo.best_detection AND best_single.best_detection GT best_bands.best_detection THEN BEGIN
+    return, dimming_single_lines
+  ENDIF ELSE IF best_combo.best_detection GT best_bands.best_detection THEN BEGIN
+    return, dimming_combo_lines
+  ENDIF ELSE BEGIN
+    return, dimming_bands
+  ENDELSE
 END
 
 
@@ -382,12 +380,12 @@ FUNCTION extract_emission_lines, instrument
 ;                 175.3, 177.2, 179.8, 180.4, 182.2, 184.5, 184.8, 185.2, 186.6, 186.9, 186.9, 188.2, 188.3, 192.0, 192.4, 193.5, 195.1, $
 ;                 196.5, 202.0, 203.8, 203.8, 211.3, 217.1, 219.1, 221.8, 244.9, 252.0, 255.1, 256.7, 258.4, 263.0, 264.8, 270.5, 274.2, $
 ;                 284.2, 292.0, 303.3, 303.8, 315.0, 319.8, 335.4, 353.8, 356.0, 360.8, 368.1, 417.7, 436.7, 445.7, 465.2, 499.4, 520.7] ; Comprehensive list
-  line_centers = [171.1, 177.2, 180.4, 195.1, 202.0, 211.3, 368.1, 445.7, 465.2] ; Selected list of those expected to be dimming sensitive
+  line_centers = [171.1, 177.2, 180.4, 195.1, 202.0, 211.3, 368.1, 445.7, 465.2] ; [Å] Selected list of those expected to be dimming sensitive
   line_centers = [line_centers, 284.2] ; Line for doing flare-interference correction
   intensity = dblarr(n_elements(line_centers), n_elements(instrument.intensity[0, *]))
   wave_bin_width = instrument.wave[1] - instrument.wave[0]
   FOR i = 0, n_elements(line_centers) - 1 DO BEGIN
-    wave_indices = where(instrument.wave GE line_centers[i]-1 and instrument.wave LE line_centers[i]+1, count)
+    wave_indices = where(instrument.wave GE line_centers[i]-1 AND instrument.wave LE line_centers[i]+1, count)
     IF count EQ 0 THEN BEGIN
       message, /INFO, 'Did not find any wavelengths around the emission line center, but should have.'
       STOP
@@ -436,6 +434,27 @@ FUNCTION combine_lines, emission_lines, num_to_combine
 END
 
 
+FUNCTION extract_bands, instrument
+  ; Add the "Veronig band" -- playing around with a broad band integration. Veronig2021 looked at EVE 150-250 Å and EUVE 80-180 Å. Kevin also suggests looking at 100-300 Å.
+  broad_band_limits = [[80.0, 180.0], [150.0, 250.0], [100.0, 300.0]] ; [Å]
+  broad_band_limits = transpose(broad_band_limits)
+  
+  intensity = dblarr(n_elements(broad_band_limits[*, 0]), n_elements(instrument.intensity[0, *]))
+  wave_bin_width = instrument.wave[1] - instrument.wave[0]
+  FOR i = 0, n_elements(broad_band_limits[*, 0]) - 1 DO BEGIN
+    wave_indices = where(instrument.wave GE broad_band_limits[i, 0] AND instrument.wave LE broad_band_limits[i, 1])
+    intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN) * wave_bin_width ; [counts]
+  ENDFOR
+
+  ; Drop final point in time which is always invalid for some reason
+  jd = instrument.jd[0:-2]
+  time_iso = instrument.time_iso[0:-2]
+  intensity = intensity[*, 0:-2]
+
+  return, {wave:broad_band_limits, intensity:intensity, jd:jd, time_iso:time_iso}
+END
+
+
 FUNCTION deconvolve_flare, emission_lines, flare_line, preflare_baselines, preflare_baseline_flare_only_line
   IF size(emission_lines.wave, /N_DIMENSIONS) EQ 1 THEN BEGIN
     num_lines = n_elements(emission_lines.wave)
@@ -461,10 +480,36 @@ FUNCTION deconvolve_flare, emission_lines, flare_line, preflare_baselines, prefl
     intensities_deconvolved[i, *] = convert_percent_change_to_counts(light_curve_deconvolved, preflare_baseline.intensity)
   ENDFOR
   
-  new_wave_names = strtrim(emission_lines.wave, 2) + ' - 284.20'
-  
-  return, {intensity:intensities_deconvolved, jd:emission_lines.jd, time_iso:emission_lines.time_iso, wave:new_wave_names}
+  return, {intensity:intensities_deconvolved, jd:emission_lines.jd, time_iso:emission_lines.time_iso, wave:emission_lines.wave}
 END
+
+
+FUNCTION plot_best_detection_light_curve, dimming, lines, preflare_baselines, instrument, num_lines_to_combine, saveloc=saveloc
+  ; Find the light curve with the best detection and store it for plotting
+  best_detection = get_best_detection(dimming, num_lines_to_combine)
+  light_curve = reform(lines.intensity[best_detection.index, *])
+  preflare_baseline = preflare_baselines.intensity[best_detection.index]
+  time_hours = (lines.jd - lines.jd[0]) * 24.
+
+  ; Get the associated dimming_combo time window for annotation
+  depth_window_indices = get_depth_window_indices(dimming, best_detection)
+  preflare_window_indices = preflare_baselines.time_indices_used
+
+  ; Errors assume simple Poisson counting statistics (only valid if counts > ~10)
+  w = window(location=[2735, 0], dimensions=[650, 400])
+  p1 = errorplot(time_hours, light_curve, sqrt(light_curve), thick=2, /CURRENT, $
+                 title=instrument.name + '; exposure time = ' + jpmprintnumber(instrument.exposure_time_sec, /NO_DECIMALS) + ' seconds; best detection', $
+                 xtitle='hours', $
+                 ytitle=best_detection.best_detection_wavelength_combo + ' summed intensity [counts]')
+  p2 = plot(time_hours[depth_window_indices], light_curve[depth_window_indices], 'tomato', thick=2, /OVERPLOT, name='used for depth calc')
+  p3 = plot(time_hours[preflare_window_indices], light_curve[preflare_window_indices], 'dodger blue', thick=2, /OVERPLOT, name='used for baseline calc')
+  p4 = plot(p1.xrange, [preflare_baseline, preflare_baseline], '--', thick=4, color='dodger blue', /OVERPLOT, name='baseline')
+  l1 = legend(target=[p2, p3, p4], position = [0.43, 0.85])
+  p1.save, saveloc + 'Best Detection Light Curves/' + instrument.name + ' Best Detection Light Curve.png'
+
+  return, p1
+END
+
 
 
 FUNCTION convert_counts_to_percent_change, emission_line, preflare_baseline
@@ -543,6 +588,7 @@ FUNCTION get_depth_window_indices, dimming, best_detection
   return, padded_indices[where(padded_indices NE 0)]
 END
 
+
 FUNCTION plot_dimming_performance, depths, instrument, num_lines_to_combine
   ordered_indices = sort(depths.depth)
   p1 = errorplot(findgen(n_elements(ordered_indices)), depths.depth[ordered_indices], depths.uncertainty[ordered_indices], font_size=16, thick=3, $
@@ -560,13 +606,19 @@ FUNCTION plot_dimming_performance, depths, instrument, num_lines_to_combine
 END
 
 
-FUNCTION get_best_detection, instrument_dimming, NO_PLOTS=NO_PLOTS
+FUNCTION get_best_detection, instrument_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS
   detection_ratio = instrument_dimming.depth / instrument_dimming.uncertainty
   best_detection = max(detection_ratio, index)
   best_detection_wavelength_combo = ''
-  FOREACH wave, instrument_dimming.wave[index, *] DO BEGIN
-    best_detection_wavelength_combo += (JPMPrintNumber(wave, /NO_DECIMALS) + 'Å ')
-  ENDFOREACH
+  IF num_lines_to_combine NE 2 AND n_elements(instrument_dimming.wave[0, *]) EQ 2 THEN BEGIN ; Logic to determine that we're looking at bands
+    best_detection_wavelength_combo = JPMPrintNumber(instrument_dimming.wave[index, 0], /NO_DECIMALS) + '-' + JPMPrintNumber(instrument_dimming.wave[index, 1], /NO_DECIMALS) + 'Å'
+  ENDIF ELSE BEGIN
+    FOR i = 0, n_elements(instrument_dimming.wave[index, *]) - 1 DO BEGIN
+      wave = instrument_dimming.wave[index, i]
+      best_detection_wavelength_combo += (JPMPrintNumber(wave, /NO_DECIMALS) + 'Å')
+      IF size(instrument_dimming.wave, /N_DIMENSIONS) EQ 2 AND i LT num_lines_to_combine-1 THEN best_detection_wavelength_combo += '+'
+    ENDFOR
+  ENDELSE
   return, {name:instrument_dimming.name, best_detection:best_detection, best_detection_wavelength_combo:best_detection_wavelength_combo, index:index, detection_ratio:detection_ratio}
 END
 
@@ -586,5 +638,5 @@ FUNCTION print_detection_performance, instrument_detection, instrument_dimming, 
          ', median depth = ' + JPMPrintNumber(median(instrument_dimming.depth)) + $
          '%, median uncertainty = ' + JPMPrintNumber(median(instrument_dimming.uncertainty)) + $ 
          ', best detection (depth/uncertainty) = ' + JPMPrintNumber(instrument_detection.best_detection), + $ 
-         ' for line combo: ' + instrument_detection.best_detection_wavelength_combo
+         ' for wavelength combo: ' + instrument_detection.best_detection_wavelength_combo
 END

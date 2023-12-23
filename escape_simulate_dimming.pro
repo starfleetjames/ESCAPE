@@ -27,6 +27,7 @@
 ;   exposure_time_sec [float]:       How long to collect photons for a single exposure. The detector counts photons so in reality this can be done post facto rather than onboard.
 ;                                    Default is 1800 (30 minutes). 
 ;   num_lines_to_combine [integer]:  The number of emission lines to combine to boost signal. Will perform every combination of emission lines. Default is 5. 
+;   log10_flux_xray [float]:         The log10 F(X) (xray flux) for the star. If this is provided, distance_pc and luminosity_scaling inputs will be ignored. 
 ;   
 ; KEYWORD PARAMETERS:
 ;   NO_PLOTS: Set this to disable creation of plots
@@ -58,7 +59,7 @@
 ; EXAMPLE:
 ;   escape_simulate_dimming, distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6
 ;-
-PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, luminosity_scaling=luminosity_scaling, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
+PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, luminosity_scaling=luminosity_scaling, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, log10_flux_xray=log10_flux_xray,$
                              NO_PLOTS=NO_PLOTS, $ 
                              escape_dimming_output=escape_dimming_output, escape_midex_dimming_output=escape_midex_dimming_output, euve_dimming_output=euve_dimming_output, escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output
 
@@ -70,6 +71,11 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   IF expected_bg_event_ratio EQ !NULL THEN expected_bg_event_ratio = 1.
   IF exposure_time_sec EQ !NULL THEN exposure_time_sec = 1800.
   IF num_lines_to_combine EQ !NULL THEN num_lines_to_combine = 5
+  IF log10_flux_xray NE !NULL THEN BEGIN
+    message, /INFO, 'X-ray flux provided. If you provided distance and/or luminosity scaling, they will be ignored.'
+    distance_pc = !VALUES.F_NAN
+    luminosity_scaling = 10^log10_flux_xray / 10^0.15092734 ; This magic number is equal to the average log10 F(X) for the sun. F(X) has units of erg/cm2/s.
+  ENDIF
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
   saveloc = '/Users/masonjp2/Library/CloudStorage/GoogleDrive-jmason86@gmail.com/.shortcut-targets-by-id/1aM0cJ5QKqP52iZb4GeBxx032vFk_c9CW/ESCAPE Initial Groundwork/Dimming Sensitivity Study /'
   
@@ -127,7 +133,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  
+
 END
 
 
@@ -235,7 +241,11 @@ END
 
 
 FUNCTION scale_eve, dataloc, eve, distance_pc, column_density, luminosity_scaling, coronal_temperature_k, expected_bg_event_ratio
-  eve_stellar = scale_eve_for_distance(eve, distance_pc)
+  IF finite(distance_pc) THEN BEGIN ; Distance was set to NaN if the user provided an input flux, which was then used to calculate a _flux_ scaling in lieu of the luminosity scaling, so both luminosity and distance will be handled there
+    eve_stellar = scale_eve_for_distance(eve, distance_pc)
+  ENDIF ELSE BEGIN
+    eve_stellar = eve
+  ENDELSE
   eve_stellar = scale_eve_for_attenuation(dataloc, eve_stellar, column_density)
   eve_stellar = scale_eve_luminosity(eve_stellar, luminosity_scaling)
   eve_stellar = scale_eve_for_temperature(eve_stellar, coronal_temperature_k)
@@ -255,9 +265,10 @@ END
 FUNCTION scale_eve_for_attenuation, dataloc, eve_stellar, column_density
   doppler_shift = 0 ; [km/s]
   doppler_broadening = 10 ; [km/s]
-  ism = h1he1abs_050(eve_stellar.wave, alog10(column_density), doppler_shift, doppler_broadening, xphi, lama, tall, $
+  ism = h1he1abs_050(eve_stellar.wave, column_density, doppler_shift, doppler_broadening, xphi, lama, tall, $
                      dataloc_heI=dataloc+'atomic_data/', dataloc_h1=dataloc+'atomic_data/')
   transmittance = interpol(ism.transmittance, ism.wave, eve_stellar.wave)
+  transmittance = rebin(transmittance, 3550, 17280) ; replicates transmittance for every time step
   eve_stellar.irrad *= transmittance
   return, eve_stellar
 END
@@ -365,12 +376,13 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine, saveloc=saveloc
   best_combo = get_best_detection(dimming_combo_lines, num_lines_to_combine)
   best_bands = get_best_detection(dimming_bands, num_lines_to_combine)
   
+  ; Hack: if you want to force one of these to be returned, comment everything out except for the return corresponding to what you want (e.g., dimming_combo_lines)
   IF best_single.best_detection GT best_combo.best_detection AND best_single.best_detection GT best_bands.best_detection THEN BEGIN
     return, dimming_single_lines
   ENDIF ELSE IF best_combo.best_detection GT best_bands.best_detection THEN BEGIN
     return, dimming_combo_lines
   ENDIF ELSE BEGIN
-    return, dimming_bands
+    return, dimming_bands 
   ENDELSE
 END
 

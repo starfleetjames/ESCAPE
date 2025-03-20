@@ -78,7 +78,7 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
     distance_pc = !VALUES.F_NAN
     luminosity_scaling = 10^log10_flux_xray / 10^0.15092734 ; This magic number is equal to the average log10 F(X) for the sun. F(X) has units of erg/cm2/s.
   ENDIF
-  IF psf_percent_ee EQ !NULL THEN psf_percent_ee = 0.95
+  IF psf_percent_ee EQ !NULL THEN psf_percent_ee = 0.90
   IF aeff_config EQ !NULL THEN aeff_config = 'Solid Gold'
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
   saveloc = '/Users/masonjp2/Library/CloudStorage/GoogleDrive-jmason86@gmail.com/.shortcut-targets-by-id/1aM0cJ5QKqP52iZb4GeBxx032vFk_c9CW/ESCAPE Initial Groundwork/Dimming Sensitivity Study/'
@@ -99,48 +99,48 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   
   ; Read data
   eve = read_eve(dataloc, escape_bandpass_min, escape_bandpass_max)
-  ;escape = read_escape(dataloc, aeff_config=aeff_config)
+  escape = read_escape(dataloc, aeff_config=aeff_config)
   ;escape_midex = read_escape_midex(dataloc)
-  euve = read_euve(dataloc)
+  ;euve = read_euve(dataloc)
   
   ; Apply scalings to EVE data to make it look like observations of another star 
   eve_stellar = scale_eve(dataloc, eve, distance_pc, column_density, luminosity_scaling, coronal_temperature_k, expected_bg_event_ratio)
 
   ; Fold stellar-simulated EVE data through effective areas (function adds intensity variable to the structure)
-  ;escape = apply_effective_area(eve_stellar, escape)
+  escape = apply_effective_area(eve_stellar, escape)
   ;escape_midex = apply_effective_area(eve_stellar, escape_midex)
-  euve = apply_effective_area(eve_stellar, euve)
+  ;euve = apply_effective_area(eve_stellar, euve)
   
   ; Account for exposure time
-  ;escape = count_photons_for_exposure_time(escape, exposure_time_sec) ; Comment this line out to hack to avoid applying exposure time
+  escape = count_photons_for_exposure_time(escape, exposure_time_sec) ; Comment this line out to hack to avoid applying exposure time
   ;escape_midex = count_photons_for_exposure_time(escape_midex, exposure_time_sec)
-  euve = count_photons_for_exposure_time(euve, exposure_time_sec)
+  ;euve = count_photons_for_exposure_time(euve, exposure_time_sec)
   
   ; Account for point spread function
-  ;escape = apply_psf_loss(escape, psf_percent_ee)
+  escape = apply_psf_loss(escape, psf_percent_ee)
   
   ; Extract information relevant for dimming and assessment of instrument performance
-  ;escape_dimming = characterize_dimming(escape, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
+  escape_dimming = characterize_dimming(escape, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
   ;escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
-  euve_dimming = characterize_dimming(euve, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
+  ;euve_dimming = characterize_dimming(euve, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
   
   ; Determine which line combination provided the best detection of the dimming
-  ;escape_detection = get_best_detection(escape_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  escape_detection = get_best_detection(escape_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;escape_midex_detection = get_best_detection(escape_midex_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  euve_detection = get_best_detection(euve_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ;euve_detection = get_best_detection(euve_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   
   ; Optional outputs
-  ;escape_dimming_output = escape_dimming
+  escape_dimming_output = escape_dimming
   ;escape_midex_dimming_output = escape_midex_dimming
-  euve_dimming_output = euve_dimming
-  ;escape_detection_output = escape_detection
+  ;euve_dimming_output = euve_dimming
+  escape_detection_output = escape_detection
   ;escape_midex_detection_output = escape_midex_detection
-  euve_detection_output = euve_detection
+  ;euve_detection_output = euve_detection
   
   ; Describe detection performance
-  ;escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
   ;escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  ;euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
 
 END
 
@@ -192,8 +192,18 @@ FUNCTION read_escape, dataloc, aeff_config=aeff_config
              a_wave, a_aeff, grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
              format='I, F, F, F, F, F, F, F, F', /SILENT
              
-    size_of_resel = 360e-4 * 390e-4 * 0.8 ; [cm2]
-    background_rate_per_resel = 1.38 ; [counts/cm2/sec]
+    ;size_of_resel = 360e-4 * 390e-4 * 0.8 ; [cm2] corresponding to 95% EE
+    ;background_rate_per_resel = 1.38 ; [counts/cm2/sec]
+    
+;    size_of_resel = !PI * (325e-4)^2. * 0.8 ; [cm2] corresponding to 73% EE
+;    background_rate_per_resel = 4.0 ; [counts/cm2/sec] ~worst case
+    
+    size_of_resel = 382e-4 * 418e-4 * 0.8 * 1.56 ; [cm2] ; corresponding to 90% EE -- The 1.56 is a scaling factor provided by Brian on 2025-03-04 to convert from a 73% EE to a 90% EE
+    background_rate_per_resel = 0.8 ; [counts/cm2/sec]
+
+;    size_of_resel = !PI * (400e-4)^2. * 0.8 ; [cm2] corresponding to 90% EE but with margin
+;    background_rate_per_resel = 4.0 ; [counts/cm2/sec] ~worst case
+;    a_aeff *= 0.6 ; ~worst case
     
     return, {name:'ESCAPE Solid Gold', wave:a_wave, aeff:a_aeff, size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
   ENDIF ELSE IF aeff_config EQ 'CSR' THEN BEGIN
@@ -468,9 +478,9 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine, exposure_time_s
   ;IF best_single.best_detection GT best_combo.best_detection AND best_single.best_detection GT best_bands.best_detection THEN BEGIN
   ;  return, dimming_single_lines
   ;ENDIF ELSE IF best_combo.best_detection GT best_bands.best_detection THEN BEGIN
-  ;  return, dimming_combo_lines
+    return, dimming_combo_lines
   ;ENDIF ELSE BEGIN
-    return, dimming_bands 
+  ;  return, dimming_bands 
   ;ENDELSE
 END
 

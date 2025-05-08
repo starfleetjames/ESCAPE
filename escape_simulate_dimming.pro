@@ -721,10 +721,10 @@ FUNCTION compute_noise, instrument, exposure_time_sec, intensity, wavelength, wi
   IF instrument.name EQ 'EUVE' THEN BEGIN
     IF spectral_integration EQ 'single lines' THEN BEGIN
       background_rate = get_euve_spectrometer_background_rate(wavelength)
-      background_noise = (background_rate * exposure_time_sec) * width_of_emission_line_bin * number_of_spectral_bins ; [counts] 
+      background_noise = (background_rate * exposure_time_sec) * width_of_emission_line_bin ; [counts] 
     ENDIF ELSE IF spectral_integration EQ 'line combo' THEN BEGIN
       background_rate = get_euve_spectrometer_background_rate(wavelength)
-      background_noise = total((background_rate * exposure_time_sec) * width_of_emission_line_bin) ; [counts]
+      background_noise = total((background_rate * exposure_time_sec) * width_of_emission_line_bin) * number_of_spectral_bins ; [counts]
     ENDIF ELSE IF spectral_integration EQ 'bands' THEN BEGIN
       background_noise = (instrument.size_of_resel_deep * instrument.background_rate_per_resel_deep * exposure_time_sec) * number_of_spectral_bins ; [counts]
     ENDIF

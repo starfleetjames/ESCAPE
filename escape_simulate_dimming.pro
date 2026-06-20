@@ -29,10 +29,16 @@
 ;   num_lines_to_combine [integer]:  The number of emission lines to combine to boost signal. Will perform every combination of emission lines. Default is 5. 
 ;   log10_flux_xray [float]:         The log10 F(X) (xray flux) for the star. If this is provided, distance_pc and luminosity_scaling inputs will be ignored. 
 ;   psf_percent_ee [float]:          The percentage of encircled energy of the telescope. Results in a loss to throughput. Default is 0.95. 
-;   aeff_config [string]:            Which effective area to use. Can be either "CSR" or "Solid Gold". Default is "Solid Gold". 
+;   aeff_config [string]:            Which effective area to use. Can be "CSR", "Solid Gold", or "Solid-er Gold". Default is "Solid Gold".
 ;   
 ; KEYWORD PARAMETERS:
 ;   NO_PLOTS: Set this to disable creation of plots
+;   NO_FLARE_CORRECTION: Set this to skip the 284.2 Å flare-template subtraction before measuring dimming depths.
+;   dimming_return [string]: Which spectral-integration dimming metric to feed into get_best_detection / downstream summaries.
+;         One of 'single', 'combo', 'bands', or 'best' (pick single vs combo vs bands by comparing best_detection).
+;         Default 'combo'.
+;   mission [string]: Which mission/instrument pipeline to run and report. One of 'escape', 'snout', 'euve', 'midex', 'sirius', 'nextup', 'extream'.
+;         Only that instrument is simulated (others are skipped). Default 'escape'. aeff_config applies only to mission='escape'.
 ;
 ; OUTPUTS:
 ;   result [anonymous structure]: In order to have a single return, the multiple outputs are contained in this structure with the fields: 
@@ -45,12 +51,14 @@
 ;   Plots to screen of the simulated light curve. 
 ;
 ; OPTIONAL OUTPUTS:
-;   escape_dimming_output [anonymous structure]: Contains the dimming parameterizations
-;   escape_midex_dimming_output [anonymous structure]: Contains the dimming parameterizations
-;   euve_dimming_output [anonymous structure]: Contains the dimming parameterizations
-;   escape_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
-;   escape_midex_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
-;   escape_detection_output [anonymous structure]: Contains the detection ratio (depth/uncertainty_depth), best detection, and corresponding line combination names
+;   dimming_output, detection_output: Mission-agnostic aliases; populated for whichever mission keyword is selected.
+;   escape_dimming_output, escape_detection_output: Set only when mission='escape'.
+;   snout_dimming_output, snout_detection_output: Set only when mission='snout'.
+;   euve_dimming_output, euve_detection_output: Set only when mission='euve'.
+;   escape_midex_dimming_output, escape_midex_detection_output: Set only when mission='midex'.
+;   sirius_dimming_output, sirius_detection_output: Set only when mission='sirius'.
+;   nextup_dimming_output, nextup_detection_output: Set only when mission='nextup' (effective_area/nextup_aeff.csv).
+;   extream_dimming_output, extream_detection_output: Set only when mission='extream' (uses Extream_Aeff_total_spec.csv as a spectrograph).
 ;   
 ;
 ; RESTRICTIONS:
@@ -60,10 +68,21 @@
 ;
 ; EXAMPLE:
 ;   escape_simulate_dimming, distance_pc=25.2, column_density=18.03, coronal_temperature_k=1.9e6
+;   escape_simulate_dimming, distance_pc=6., dimming_return='best'  ; auto-pick single vs combo vs bands
+;   escape_simulate_dimming, mission='snout', detection_output=det, dimming_output=dm
+;   escape_simulate_dimming, mission='sirius', detection_output=det, dimming_output=dm
+;   escape_simulate_dimming, mission='nextup', detection_output=det, dimming_output=dm
+;   escape_simulate_dimming, mission='extream', detection_output=det, dimming_output=dm
+;   escape_simulate_dimming, mission='sirius', /NO_FLARE_CORRECTION, detection_output=det, dimming_output=dm
 ;-
 PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, luminosity_scaling=luminosity_scaling, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, log10_flux_xray=log10_flux_xray, psf_percent_ee=psf_percent_ee, aeff_config=aeff_config, $
-                             NO_PLOTS=NO_PLOTS, $ 
-                             escape_dimming_output=escape_dimming_output, escape_midex_dimming_output=escape_midex_dimming_output, euve_dimming_output=euve_dimming_output, escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output
+                             NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return, mission=mission, $
+                             dimming_output=dimming_output, detection_output=detection_output, $
+                             escape_dimming_output=escape_dimming_output, escape_midex_dimming_output=escape_midex_dimming_output, euve_dimming_output=euve_dimming_output, escape_detection_output=escape_detection_output, escape_midex_detection_output=escape_midex_detection_output, euve_detection_output=euve_detection_output, $
+                             snout_dimming_output=snout_dimming_output, snout_detection_output=snout_detection_output, $
+                             sirius_dimming_output=sirius_dimming_output, sirius_detection_output=sirius_detection_output, $
+                             nextup_dimming_output=nextup_dimming_output, nextup_detection_output=nextup_detection_output, $
+                             extream_dimming_output=extream_dimming_output, extream_detection_output=extream_detection_output
 
   ; Defaults
   IF distance_pc EQ !NULL THEN distance_pc = 6.
@@ -80,8 +99,24 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   ENDIF
   IF psf_percent_ee EQ !NULL THEN psf_percent_ee = 0.90
   IF aeff_config EQ !NULL THEN aeff_config = 'Solid Gold'
+  IF dimming_return EQ !NULL THEN dimming_return = 'combo'
+  dimming_return = strlowcase(strtrim(string(dimming_return), 2))
+  dimming_allowed = ['single', 'combo', 'bands', 'best']
+  IF total(strcmp(dimming_allowed, dimming_return)) EQ 0 THEN BEGIN
+    message, /INFO, 'dimming_return must be single, combo, bands, or best. Using combo.'
+    dimming_return = 'combo'
+  ENDIF
+
+  IF mission EQ !NULL THEN mission = 'escape'
+  mission = strlowcase(strtrim(string(mission), 2))
+  mission_allowed = ['escape', 'snout', 'euve', 'midex', 'sirius', 'nextup', 'extream']
+  IF total(strcmp(mission_allowed, mission)) EQ 0 THEN BEGIN
+    message, /INFO, 'mission must be escape, snout, euve, midex, sirius, nextup, or extream. Using escape.'
+    mission = 'escape'
+  ENDIF
+
   dataloc = '~/Dropbox/Research/Data/ESCAPE/'
-  saveloc = '/Users/masonjp2/Library/CloudStorage/GoogleDrive-jmason86@gmail.com/.shortcut-targets-by-id/1aM0cJ5QKqP52iZb4GeBxx032vFk_c9CW/ESCAPE Initial Groundwork/Dimming Sensitivity Study/'
+  saveloc = '~/Library/CloudStorage/GoogleDrive-jmason86@gmail.com/.shortcut-targets-by-id/1aM0cJ5QKqP52iZb4GeBxx032vFk_c9CW/ESCAPE Initial Groundwork/Dimming Sensitivity Study/'
   
   ; Ensure that inputs are right type
   distance_pc = float(distance_pc)
@@ -97,50 +132,107 @@ PRO escape_simulate_dimming, distance_pc=distance_pc, column_density=column_dens
   escape_bandpass_max = 800 ; [Å] longest ""
   width_of_emission_line_bin = 2.0 ; [Å] this is the full width of the window that we'll integrate over for each emission line
   
-  ; Read data
+  ; Read EVE dimming cube (needed for every mission)
   eve = read_eve(dataloc, escape_bandpass_min, escape_bandpass_max)
-  escape = read_escape(dataloc, aeff_config=aeff_config)
-  ;escape_midex = read_escape_midex(dataloc)
-  ;euve = read_euve(dataloc)
   
   ; Apply scalings to EVE data to make it look like observations of another star 
   eve_stellar = scale_eve(dataloc, eve, distance_pc, column_density, luminosity_scaling, coronal_temperature_k, expected_bg_event_ratio)
 
-  ; Fold stellar-simulated EVE data through effective areas (function adds intensity variable to the structure)
-  escape = apply_effective_area(eve_stellar, escape)
-  ;escape_midex = apply_effective_area(eve_stellar, escape_midex)
-  ;euve = apply_effective_area(eve_stellar, euve)
-  
-  ; Account for exposure time
-  escape = count_photons_for_exposure_time(escape, exposure_time_sec) ; Comment this line out to hack to avoid applying exposure time
-  ;escape_midex = count_photons_for_exposure_time(escape_midex, exposure_time_sec)
-  ;euve = count_photons_for_exposure_time(euve, exposure_time_sec)
-  
-  ; Account for point spread function
-  escape = apply_psf_loss(escape, psf_percent_ee)
-  
-  ; Extract information relevant for dimming and assessment of instrument performance
-  escape_dimming = characterize_dimming(escape, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
-  ;escape_midex_dimming = characterize_dimming(escape_midex, num_lines_to_combine, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
-  ;euve_dimming = characterize_dimming(euve, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS)
-  
-  ; Determine which line combination provided the best detection of the dimming
-  escape_detection = get_best_detection(escape_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  ;escape_midex_detection = get_best_detection(escape_midex_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  ;euve_detection = get_best_detection(euve_dimming, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  
-  ; Optional outputs
-  escape_dimming_output = escape_dimming
-  ;escape_midex_dimming_output = escape_midex_dimming
-  ;euve_dimming_output = euve_dimming
-  escape_detection_output = escape_detection
-  ;escape_midex_detection_output = escape_midex_detection
-  ;euve_detection_output = euve_detection
-  
-  ; Describe detection performance
-  escape_detection = print_detection_performance(escape_detection, escape_dimming, escape, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  ;escape_midex_detection = print_detection_performance(escape_midex_detection, escape_midex_dimming, escape_midex, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
-  ;euve_detection = print_detection_performance(euve_detection, euve_dimming, euve, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+  CASE mission OF
+    'escape': BEGIN
+      inst = read_escape(dataloc, aeff_config=aeff_config)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      escape_dimming_output = dm
+      escape_detection_output = det
+      ; (det): pass-by-value so PRO cannot overwrite caller det (IDL positional args are writable by callee)
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    'snout': BEGIN
+      inst = read_snout(dataloc)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      snout_dimming_output = dm
+      snout_detection_output = det
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    'euve': BEGIN
+      inst = read_euve(dataloc)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      euve_dimming_output = dm
+      euve_detection_output = det
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    'midex': BEGIN
+      inst = read_escape_midex(dataloc)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      escape_midex_dimming_output = dm
+      escape_midex_detection_output = det
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    'sirius': BEGIN
+      inst = read_sirius(dataloc)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      sirius_dimming_output = dm
+      sirius_detection_output = det
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    'nextup': BEGIN
+      inst = read_nextup(dataloc)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      nextup_dimming_output = dm
+      nextup_detection_output = det
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    'extream': BEGIN
+      inst = read_extream(dataloc)
+      inst = apply_effective_area(eve_stellar, inst)
+      inst = count_photons_for_exposure_time(inst, exposure_time_sec)
+      inst = apply_psf_loss(inst, psf_percent_ee)
+      dm = characterize_dimming(inst, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return)
+      det = get_best_detection(dm, num_lines_to_combine, NO_PLOTS=NO_PLOTS)
+      dimming_output = dm
+      detection_output = det
+      extream_dimming_output = dm
+      extream_detection_output = det
+      print_detection_performance, (det), dm, inst, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
+    END
+    ELSE: message, /INFO, 'escape_simulate_dimming: internal mission error; skipping.'
+  ENDCASE
 
 END
 
@@ -186,8 +278,11 @@ FUNCTION read_eve, dataloc, escape_bandpass_min, escape_bandpass_max
 END
 
 
-FUNCTION read_escape, dataloc, aeff_config=aeff_config  
-  IF aeff_config EQ 'Solid Gold' THEN BEGIN
+FUNCTION read_escape, dataloc, aeff_config=aeff_config
+  IF aeff_config EQ !NULL THEN aeff_config = 'Solid Gold'
+
+  aeff_config_clean = strlowcase(strtrim(aeff_config, 2))
+  IF aeff_config_clean EQ 'solid gold' THEN BEGIN
     readcol, dataloc + 'effective_area/ESCAPE_Aeff_50cm_PM-Au_SM-Au_Grat-ZrDet-KIg20-Kbrg40.dat', $
              a_wave, a_aeff, grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
              format='I, F, F, F, F, F, F, F, F', /SILENT
@@ -205,16 +300,26 @@ FUNCTION read_escape, dataloc, aeff_config=aeff_config
 ;    background_rate_per_resel = 4.0 ; [counts/cm2/sec] ~worst case
 ;    a_aeff *= 0.6 ; ~worst case
     
-    return, {name:'ESCAPE Solid Gold', wave:a_wave, aeff:a_aeff, size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
-  ENDIF ELSE IF aeff_config EQ 'CSR' THEN BEGIN
+    return, {name:'ESCAPE Solid Gold', instrument_mode:'spectrograph', wave:a_wave, aeff:a_aeff, size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
+  ENDIF ELSE IF (aeff_config_clean EQ 'solid-er gold') OR (aeff_config_clean EQ 'solider gold') THEN BEGIN
+    readcol, dataloc + 'effective_area/ESCAPE_Aeff_50cm_PM-Au_SM-AU_Grat-AuDet-KIg20-Kbrg40.dat', $
+             a_wave, a_aeff, grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
+             format='I, F, F, F, F, F, F, F, F', /SILENT
+
+    size_of_resel = 382e-4 * 418e-4 * 0.8 * 1.56 ; [cm2] ; corresponding to 90% EE -- The 1.56 is a scaling factor provided by Brian on 2025-03-04 to convert from a 73% EE to a 90% EE
+    background_rate_per_resel = 0.8 ; [counts/cm2/sec]
+
+    return, {name:'ESCAPE Solid-er Gold', instrument_mode:'spectrograph', wave:a_wave, aeff:a_aeff, size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
+  ENDIF ELSE IF aeff_config_clean EQ 'csr' THEN BEGIN
     readcol, dataloc + 'effective_area/ESCAPE_vault_single460_effa_Zr_Zr.dat', $
              a_wave,a_aeff,grat40_aeff, grate20_aeff, a1_aeff40, a2_aeff40, a3_aeff40, a4_aeff40, a1_aeff20, a2_aeff20, $
              format='I, F, F, F, F, F, F, F, F', /SILENT
              
     message, 'Need to ask Kevin what the size of resel and background rate per resel is for ESCAPE CSR'
     STOP
-    return, {name:'ESCAPE CSR', wave:a_wave, aeff:a_aeff}
+    return, {name:'ESCAPE CSR', instrument_mode:'spectrograph', wave:a_wave, aeff:a_aeff}
   ENDIF ELSE BEGIN
+    message, 'Unrecognized ESCAPE aeff_config: ' + strtrim(aeff_config, 2), /INFO
     STOP ; You must've passed in a bad aeff_config
   ENDELSE
 END
@@ -242,18 +347,16 @@ FUNCTION read_escape_midex, dataloc
   sort_indices = sort(a_wave)
   a_wave = a_wave[sort_indices]
   a_aeff = a_aeff[sort_indices]
-  
-  message, 'Need to ask Kevin what the size of resel and background rate per resel is for ESCAPE MIDEX'
-  STOP
-    
-  return, {name:'ESCAPE MidEx', wave:a_wave, aeff:a_aeff}
+
+  ; FIXME: Replace with MIDEX-specific resel/bkg when available (uses Solid Gold baseline from gap fill)
+  return, {name:'ESCAPE MidEx', instrument_mode:'spectrograph', wave:a_wave, aeff:a_aeff, size_of_resel:baseline.size_of_resel, background_rate_per_resel:baseline.background_rate_per_resel}
 END
 
 
 FUNCTION read_euve, dataloc
   spectrometer = read_euve_spectrometer(dataloc)
   deep_telescope = read_euve_deep_telescope(dataloc)
-  euve = create_struct({name:'EUVE'}, spectrometer, deep_telescope)
+  euve = create_struct({name:'EUVE', instrument_mode:'hybrid'}, spectrometer, deep_telescope)
   
   return, euve
 END
@@ -298,7 +401,8 @@ FUNCTION read_euve_deep_telescope, dataloc
   size_of_resel = (90 * 1e-4)^2 ; [cm2]
   background_rate_per_resel = 1.5 ; [counts/cm2/sec]
   
-  return, {wave_deep:wave, aeff_deep:aeff, size_of_resel_deep:size_of_resel, background_rate_per_resel_deep: background_rate_per_resel}
+  return, {wave_deep:wave, aeff_deep:aeff, size_of_resel_deep:size_of_resel, background_rate_per_resel_deep:background_rate_per_resel, $
+           wave_filter_defined_bands:wave, aeff_filter_defined_bands:reform(aeff, n_elements(aeff), 1), filter_defined_band_names:['EUVE deep']}
 END
 
 
@@ -317,6 +421,173 @@ FUNCTION scale_eve, dataloc, eve, distance_pc, column_density, luminosity_scalin
   ;save, eve_stellar, filename='stellar_spectrum_temporary.sav', /COMPRESS
   
   return, eve_stellar
+END
+
+
+FUNCTION read_snout, dataloc
+    readcol, dataloc + 'effective_area/snout_aeff.csv', $
+             a_wave, a_aeff, format='F, F', /SILENT
+    readcol, dataloc + 'effective_area/SNOUT_EUV_Aeff_03042023.txt', $
+             band_wave, channel1, channel2, channel3, format='F, F, F, F', /SILENT
+
+    size_of_resel = 0.00004225 ; [cm2]
+    background_rate_per_resel = 0.0 ; [counts/cm2/sec] ; Not used for CCD noise model
+    ccd_pixels_per_resel = 25.
+    ccd_n_resels = 1.
+    ccd_dark_rate_per_pixel = 0.1 ; [electrons/pixel/sec]
+    ccd_read_noise_per_pixel = 10. ; [electrons/pixel]
+    ccd_gain_counts_per_electron = 1. ; [counts/electron]
+
+    aeff_filter_defined_bands = dblarr(n_elements(band_wave), 3)
+    aeff_filter_defined_bands[*, 0] = channel1
+    aeff_filter_defined_bands[*, 1] = channel2
+    aeff_filter_defined_bands[*, 2] = channel3
+    filter_defined_bands = {wave_filter_defined_bands:band_wave, aeff_filter_defined_bands:aeff_filter_defined_bands, $
+                            filter_defined_band_names:['SNOUT channel 1', 'SNOUT channel 2', 'SNOUT channel 3']}
+    snout = {name:'SNOUT', instrument_mode:'photometer', noise_model:'ccd', wave:a_wave, aeff:a_aeff, $
+             size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel, $
+             ccd_pixels_per_resel:ccd_pixels_per_resel, ccd_n_resels:ccd_n_resels, $
+             ccd_dark_rate_per_pixel:ccd_dark_rate_per_pixel, ccd_read_noise_per_pixel:ccd_read_noise_per_pixel, $
+             ccd_gain_counts_per_electron:ccd_gain_counts_per_electron}
+
+    return, create_struct(snout, filter_defined_bands)
+END
+
+
+FUNCTION read_sirius, dataloc
+  readcol, dataloc + 'effective_area/Sirius_Aeff_total.csv', $
+           a_wave, a_aeff, format='F, F', /SILENT
+  size_of_resel = 0.000128 ; [cm2]
+  background_rate_per_resel = 0.8 ; [counts/cm2/sec]
+  return, {name:'Sirius', instrument_mode:'spectrograph', wave:a_wave, aeff:a_aeff, $
+           size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
+END
+
+
+FUNCTION read_nextup, dataloc
+  readcol, dataloc + 'effective_area/nextup_aeff.csv', $
+           a_wave, a_aeff, format='F, F', /SILENT
+  size_of_resel = 0.00004225 ; [cm2]
+  background_rate_per_resel = 0.38 ; [counts/cm2/sec]
+  filter_defined_bands = read_nextup_filter_defined_bands(dataloc)
+  nextup = {name:'NExtUP', instrument_mode:'photometer', wave:a_wave, aeff:a_aeff, $
+            size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
+  return, create_struct(nextup, filter_defined_bands)
+END
+
+
+FUNCTION read_nextup_filter_defined_bands, dataloc
+  files = ['NExtUP_Aeff_ChannelA.csv', 'NExtUP_Aeff_ChannelB.csv', 'NExtUP_Aeff_ChannelC.csv', $
+           'NExtUP_Aeff_Channel304.csv', 'NExtUP_Aeff_ChannelSiC.csv']
+  names = ['NExtUP A', 'NExtUP B', 'NExtUP C', 'NExtUP 304', 'NExtUP SiC']
+  wave_grid = findgen(1001)
+  aeff_filter_defined_bands = dblarr(n_elements(wave_grid), n_elements(files))
+
+  FOR i = 0, n_elements(files) - 1 DO BEGIN
+    readcol, dataloc + 'effective_area/' + files[i], wave, aeff, format='F, F', /SILENT
+    aeff_filter_defined_bands[*, i] = interpolate_aeff_to_eve_grid(wave, aeff, wave_grid)
+  ENDFOR
+
+  return, {wave_filter_defined_bands:wave_grid, aeff_filter_defined_bands:aeff_filter_defined_bands, filter_defined_band_names:names}
+END
+
+
+FUNCTION read_extream_spectrometer, dataloc
+  readcol, dataloc + 'effective_area/Extream_Aeff_total_spec.csv', $
+           a_wave, a_aeff, format='F, F', /SILENT
+  size_of_resel = 0.000128 ; [cm2]
+  background_rate_per_resel = 0.8 ; [counts/cm2/sec]
+  return, {name:'EXTREAM', instrument_mode:'spectrograph', wave:a_wave, aeff:a_aeff, size_of_resel:size_of_resel, background_rate_per_resel:background_rate_per_resel}
+END
+
+
+FUNCTION read_extream, dataloc
+  return, read_extream_spectrometer(dataloc)
+END
+
+
+FUNCTION structure_has_tag, structure, tag_name
+  return, total(strcmp(tag_names(structure), strupcase(strtrim(string(tag_name), 2)))) GT 0
+END
+
+
+FUNCTION instrument_has_deep_channel, instrument
+  return, structure_has_tag(instrument, 'WAVE_DEEP') AND structure_has_tag(instrument, 'AEFF_DEEP')
+END
+
+
+FUNCTION instrument_mode, instrument
+  IF structure_has_tag(instrument, 'INSTRUMENT_MODE') THEN return, strlowcase(strtrim(string(instrument.instrument_mode), 2))
+  return, 'spectrograph'
+END
+
+
+FUNCTION instrument_has_spectroscopy, instrument
+  mode = instrument_mode(instrument)
+  return, mode EQ 'spectrograph' OR mode EQ 'hybrid'
+END
+
+
+FUNCTION instrument_band_mode, instrument
+  IF structure_has_tag(instrument, 'BAND_MODE') THEN return, strlowcase(strtrim(string(instrument.band_mode), 2))
+  mode = instrument_mode(instrument)
+  IF mode EQ 'photometer' THEN return, 'filter_defined'
+  IF mode EQ 'hybrid' AND (instrument_has_filter_defined_band_definitions(instrument) OR instrument_has_filter_defined_band_intensity(instrument)) THEN return, 'filter_defined'
+  return, 'post_facto_integration'
+END
+
+
+FUNCTION instrument_has_filter_defined_band_definitions, instrument
+  return, structure_has_tag(instrument, 'WAVE_FILTER_DEFINED_BANDS') AND structure_has_tag(instrument, 'AEFF_FILTER_DEFINED_BANDS')
+END
+
+
+FUNCTION instrument_has_filter_defined_band_intensity, instrument
+  return, structure_has_tag(instrument, 'INTENSITY_FILTER_DEFINED_BANDS')
+END
+
+
+FUNCTION instrument_uses_filter_defined_bands, instrument
+  return, instrument_band_mode(instrument) EQ 'filter_defined' AND (instrument_has_filter_defined_band_definitions(instrument) OR instrument_has_filter_defined_band_intensity(instrument))
+END
+
+
+FUNCTION get_filter_defined_band_count, aeff_filter_defined_bands
+  dims = size(aeff_filter_defined_bands, /DIMENSIONS)
+  IF n_elements(dims) EQ 1 THEN return, 1
+  return, dims[1]
+END
+
+
+FUNCTION get_filter_defined_band_response_limits, wave, aeff_filter_defined_bands
+  n_filter_defined_bands = get_filter_defined_band_count(aeff_filter_defined_bands)
+  response_limits = dblarr(n_filter_defined_bands, 2)
+
+  FOR i = 0, n_filter_defined_bands - 1 DO BEGIN
+    IF n_filter_defined_bands EQ 1 THEN BEGIN
+      aeff = reform(aeff_filter_defined_bands)
+    ENDIF ELSE BEGIN
+      aeff = reform(aeff_filter_defined_bands[*, i])
+    ENDELSE
+
+    positive_indices = where(aeff GT 0, count)
+    IF count GT 0 THEN BEGIN
+      response_limits[i, 0] = min(wave[positive_indices])
+      response_limits[i, 1] = max(wave[positive_indices])
+    ENDIF ELSE BEGIN
+      response_limits[i, *] = !VALUES.F_NAN
+    ENDELSE
+  ENDFOR
+
+  return, response_limits
+END
+
+
+FUNCTION interpolate_aeff_to_eve_grid, wave, aeff, eve_wave
+  aeff_interp = interpol(aeff, wave, eve_wave) > 0
+  outside_indices = where(eve_wave LT min(wave) OR eve_wave GT max(wave), count)
+  IF count GT 0 THEN aeff_interp[outside_indices] = 0
+  return, aeff_interp
 END
 
 
@@ -359,7 +630,7 @@ END
 
 
 FUNCTION apply_effective_area, eve_stellar, instrument
-  aeff = interpol(instrument.aeff, instrument.wave, eve_stellar.wave)
+  aeff = interpolate_aeff_to_eve_grid(instrument.wave, instrument.aeff, eve_stellar.wave)
 
   intensity = eve_stellar.irrad
   FOR i = 0, n_elements(eve_stellar.irrad[0, *]) - 1 DO BEGIN
@@ -371,9 +642,9 @@ FUNCTION apply_effective_area, eve_stellar, instrument
   instrument = JPMReplaceStructureValue(instrument, 'intensity', intensity)
   instrument_updated = create_struct(instrument, {jd:eve_stellar.jd, time_iso:eve_stellar.time_iso})
   
-  ; Also apply the Deep survey telescope effective area
-  IF instrument.name EQ 'EUVE' THEN BEGIN
-    aeff_deep = interpol(instrument.aeff_deep, instrument.wave_deep, eve_stellar.wave) > 0
+  ; Also apply the deep/photometer effective area for bifurcated instruments
+  IF instrument_has_deep_channel(instrument) THEN BEGIN
+    aeff_deep = interpolate_aeff_to_eve_grid(instrument.wave_deep, instrument.aeff_deep, eve_stellar.wave)
     
     intensity_deep = eve_stellar.irrad
     FOR i = 0, n_elements(eve_stellar.irrad[0, *]) - 1 DO BEGIN
@@ -383,6 +654,32 @@ FUNCTION apply_effective_area, eve_stellar, instrument
     instrument_updated = JPMReplaceStructureValue(instrument_updated, 'wave_deep', eve_stellar.wave)
     instrument_updated = JPMReplaceStructureValue(instrument_updated, 'aeff_deep', aeff_deep)
     instrument_updated = create_struct(instrument_updated, {intensity_deep:intensity_deep})
+  ENDIF
+
+  ; Filter-defined bands are physical filter/channel products: integrate the full response curve now.
+  IF instrument_has_filter_defined_band_definitions(instrument) THEN BEGIN
+    n_filter_defined_bands = get_filter_defined_band_count(instrument.aeff_filter_defined_bands)
+    aeff_filter_defined_bands = dblarr(n_elements(eve_stellar.wave), n_filter_defined_bands)
+    intensity_filter_defined_bands = dblarr(n_filter_defined_bands, n_elements(eve_stellar.jd))
+    wave_bin_width = eve_stellar.wave[1] - eve_stellar.wave[0]
+
+    FOR band_index = 0, n_filter_defined_bands - 1 DO BEGIN
+      IF n_filter_defined_bands EQ 1 THEN BEGIN
+        aeff_band = reform(instrument.aeff_filter_defined_bands)
+      ENDIF ELSE BEGIN
+        aeff_band = reform(instrument.aeff_filter_defined_bands[*, band_index])
+      ENDELSE
+      aeff_filter_defined_bands[*, band_index] = interpolate_aeff_to_eve_grid(instrument.wave_filter_defined_bands, aeff_band, eve_stellar.wave)
+
+      FOR time_index = 0, n_elements(eve_stellar.irrad[0, *]) - 1 DO BEGIN
+        intensity_filter_defined_bands[band_index, time_index] = total(eve_stellar.irrad[*, time_index] * aeff_filter_defined_bands[*, band_index], /NAN) * wave_bin_width ; [counts/s]
+      ENDFOR
+    ENDFOR
+
+    filter_defined_band_limits = get_filter_defined_band_response_limits(eve_stellar.wave, aeff_filter_defined_bands)
+    instrument_updated = JPMReplaceStructureValue(instrument_updated, 'wave_filter_defined_bands', eve_stellar.wave)
+    instrument_updated = JPMReplaceStructureValue(instrument_updated, 'aeff_filter_defined_bands', aeff_filter_defined_bands)
+    instrument_updated = create_struct(instrument_updated, {filter_defined_band_limits:filter_defined_band_limits, intensity_filter_defined_bands:intensity_filter_defined_bands})
   ENDIF
   
   return, instrument_updated
@@ -394,6 +691,10 @@ FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
   number_of_exposures = ceil(max(t_sec)/exposure_time_sec)
   intensity_exposures = dblarr(n_elements(instrument.aeff), number_of_exposures)
   intensity_exposures_deep = intensity_exposures
+  IF instrument_has_filter_defined_band_intensity(instrument) THEN BEGIN
+    n_filter_defined_bands = n_elements(instrument.intensity_filter_defined_bands[*, 0])
+    intensity_exposures_filter_defined_bands = dblarr(n_filter_defined_bands, number_of_exposures)
+  ENDIF
   jd_centers = dblarr(number_of_exposures)
   time_iso_centers = strarr(number_of_exposures)
   eve_time_binning = (t_sec[-1] - t_sec[0]) / n_elements(t_sec)
@@ -405,8 +706,11 @@ FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
     IF count EQ 0 THEN message, /INFO, 'Uh oh. No times found in exposure interval.'
     intensity_exposures[*, i] = (total(instrument.intensity[*, exposure_interval_indices], 2, /NAN)) * eve_time_binning ; [counts/Å]
     
-    IF instrument.name EQ 'EUVE' THEN BEGIN
+    IF instrument_has_deep_channel(instrument) THEN BEGIN
       intensity_exposures_deep[*, i] = (total(instrument.intensity_deep[*, exposure_interval_indices], 2, /NAN)) * eve_time_binning ; [counts/Å]
+    ENDIF
+    IF instrument_has_filter_defined_band_intensity(instrument) THEN BEGIN
+      intensity_exposures_filter_defined_bands[*, i] = (total(instrument.intensity_filter_defined_bands[*, exposure_interval_indices], 2, /NAN)) * eve_time_binning ; [counts]
     ENDIF
 
     ; new center time
@@ -422,8 +726,11 @@ FUNCTION count_photons_for_exposure_time, instrument, exposure_time_sec
   instrument = JPMReplaceStructureValue(instrument, 'time_iso', time_iso_centers)
   instrument_updated = create_struct(instrument, {exposure_time_sec:exposure_time_sec})
   
-  IF instrument.name EQ 'EUVE' THEN BEGIN
+  IF instrument_has_deep_channel(instrument) THEN BEGIN
     instrument_updated = JPMReplaceStructureValue(instrument_updated, 'intensity_deep', intensity_exposures_deep)
+  ENDIF
+  IF instrument_has_filter_defined_band_intensity(instrument) THEN BEGIN
+    instrument_updated = JPMReplaceStructureValue(instrument_updated, 'intensity_filter_defined_bands', intensity_exposures_filter_defined_bands)
   ENDIF
   return, instrument_updated
 END
@@ -431,28 +738,55 @@ END
 
 FUNCTION apply_psf_loss, instrument, psf_percent_ee
   instrument.intensity *= psf_percent_ee
+  IF instrument_has_deep_channel(instrument) THEN instrument.intensity_deep *= psf_percent_ee
+  IF instrument_has_filter_defined_band_intensity(instrument) THEN instrument.intensity_filter_defined_bands *= psf_percent_ee
   return, instrument
 END
 
 
-FUNCTION characterize_dimming, instrument, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS
+FUNCTION characterize_dimming, instrument, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, saveloc=saveloc, NO_PLOTS=NO_PLOTS, NO_FLARE_CORRECTION=NO_FLARE_CORRECTION, dimming_return=dimming_return
+  IF ~instrument_has_spectroscopy(instrument) THEN BEGIN
+    IF dimming_return NE !NULL THEN BEGIN
+      requested_dimming_return = strlowcase(strtrim(string(dimming_return), 2))
+      IF requested_dimming_return NE 'bands' THEN message, /INFO, instrument.name + ' is marked as a photometer; using filter-defined bands instead of ' + requested_dimming_return + '.'
+    ENDIF
+
+    bands = extract_bands(instrument)
+    preflare_baselines_bands = estimate_preflare_baseline(bands)
+    dimming_bands = get_dimming_depth(instrument, bands, preflare_baselines_bands, exposure_time_sec, width_of_emission_line_bin, spectral_integration='bands')
+    best_bands = get_best_detection(dimming_bands, num_lines_to_combine)
+
+    IF ~keyword_set(NO_PLOTS) THEN BEGIN
+      p5 = plot_best_detection_light_curve(dimming_bands, bands, preflare_baselines_bands, instrument, num_lines_to_combine, exposure_time_sec, width_of_emission_line_bin, spectral_integration='bands', saveloc=saveloc)
+    ENDIF
+
+    save, dimming_bands, bands, preflare_baselines_bands, instrument, num_lines_to_combine, best_bands, filename='light_curve_instrument_temporary.sav'
+    return, dimming_bands
+  ENDIF
+
   emission_lines = extract_emission_lines(instrument, width_of_emission_line_bin)
   flare_only_line = extract_284_correction_line(emission_lines, new_emission_lines=emission_lines)
   combined_lines = combine_lines(emission_lines, num_lines_to_combine)
   bands = extract_bands(instrument)
   
   preflare_baselines_single_lines = estimate_preflare_baseline(emission_lines)
-  preflare_baseline_flare_only_line = estimate_preflare_baseline(flare_only_line)
   preflare_baselines_combo_lines = estimate_preflare_baseline(combined_lines)
   preflare_baselines_bands = estimate_preflare_baseline(bands)
   
-  emission_lines_flare_deconvolved = deconvolve_flare(emission_lines, flare_only_line, preflare_baselines_single_lines, preflare_baseline_flare_only_line)
-  combined_lines_flare_deconvolved = deconvolve_flare(combined_lines, flare_only_line, preflare_baselines_combo_lines, preflare_baseline_flare_only_line)
-  bands_flare_deconvolved = deconvolve_flare(bands, flare_only_line, preflare_baselines_bands, preflare_baseline_flare_only_line)
+  IF keyword_set(NO_FLARE_CORRECTION) THEN BEGIN
+    emission_lines_for_dimming = emission_lines
+    combined_lines_for_dimming = combined_lines
+    bands_for_dimming = bands
+  ENDIF ELSE BEGIN
+    preflare_baseline_flare_only_line = estimate_preflare_baseline(flare_only_line)
+    emission_lines_for_dimming = deconvolve_flare(emission_lines, flare_only_line, preflare_baselines_single_lines, preflare_baseline_flare_only_line)
+    combined_lines_for_dimming = deconvolve_flare(combined_lines, flare_only_line, preflare_baselines_combo_lines, preflare_baseline_flare_only_line)
+    bands_for_dimming = deconvolve_flare(bands, flare_only_line, preflare_baselines_bands, preflare_baseline_flare_only_line)
+  ENDELSE
   
-  dimming_single_lines = get_dimming_depth(instrument, emission_lines_flare_deconvolved, preflare_baselines_single_lines, exposure_time_sec, width_of_emission_line_bin, spectral_integration='single lines')
-  dimming_combo_lines = get_dimming_depth(instrument, combined_lines_flare_deconvolved, preflare_baselines_combo_lines, exposure_time_sec, width_of_emission_line_bin, spectral_integration='line combo')
-  dimming_bands = get_dimming_depth(instrument, bands_flare_deconvolved, preflare_baselines_bands, exposure_time_sec, width_of_emission_line_bin, spectral_integration='bands')
+  dimming_single_lines = get_dimming_depth(instrument, emission_lines_for_dimming, preflare_baselines_single_lines, exposure_time_sec, width_of_emission_line_bin, spectral_integration='single lines')
+  dimming_combo_lines = get_dimming_depth(instrument, combined_lines_for_dimming, preflare_baselines_combo_lines, exposure_time_sec, width_of_emission_line_bin, spectral_integration='line combo')
+  dimming_bands = get_dimming_depth(instrument, bands_for_dimming, preflare_baselines_bands, exposure_time_sec, width_of_emission_line_bin, spectral_integration='bands')
   
   IF ~keyword_set(NO_PLOTS) THEN BEGIN
     p1 = plot_dimming_performance(dimming_single_lines, instrument, 1)
@@ -474,14 +808,22 @@ FUNCTION characterize_dimming, instrument, num_lines_to_combine, exposure_time_s
   save, dimming_single_lines, emission_lines, preflare_baselines_single_lines, dimming_combo_lines, combined_lines, preflare_baselines_combo_lines, dimming_bands, bands, preflare_baselines_bands, instrument, num_lines_to_combine, best_single, best_combo, best_bands, $
         filename='light_curve_instrument_temporary.sav'
   
-  ; Hack: if you want to force one of these to be returned, comment everything out except for the return corresponding to what you want (e.g., dimming_combo_lines)
-  ;IF best_single.best_detection GT best_combo.best_detection AND best_single.best_detection GT best_bands.best_detection THEN BEGIN
-  ;  return, dimming_single_lines
-  ;ENDIF ELSE IF best_combo.best_detection GT best_bands.best_detection THEN BEGIN
-    return, dimming_combo_lines
-  ;ENDIF ELSE BEGIN
-  ;  return, dimming_bands 
-  ;ENDELSE
+  IF dimming_return EQ !NULL THEN dimming_return = 'combo'
+  dimming_return = strlowcase(strtrim(string(dimming_return), 2))
+  CASE dimming_return OF
+    'single': return, dimming_single_lines
+    'combo': return, dimming_combo_lines
+    'bands': return, dimming_bands
+    'best': BEGIN
+      IF best_single.best_detection GT best_combo.best_detection AND best_single.best_detection GT best_bands.best_detection THEN return, dimming_single_lines
+      IF best_combo.best_detection GT best_bands.best_detection THEN return, dimming_combo_lines
+      return, dimming_bands
+    END
+    ELSE: BEGIN
+      message, /INFO, 'characterize_dimming: unknown dimming_return=' + dimming_return + ', using combo.'
+      return, dimming_combo_lines
+    END
+  ENDCASE
 END
 
 
@@ -545,6 +887,8 @@ END
 
 
 FUNCTION extract_bands, instrument
+  IF instrument_uses_filter_defined_bands(instrument) THEN return, extract_filter_defined_bands(instrument)
+
   ; Add the "Veronig band" -- playing around with a broad band integration. Veronig2021 looked at EVE 150-250 Å and EUVE 80-180 Å. Kevin also suggests looking at 100-300 Å.
   broad_band_limits = [[80.0, 180.0], [150.0, 250.0], [100.0, 300.0]] ; [Å]
   broad_band_limits = transpose(broad_band_limits)
@@ -553,9 +897,9 @@ FUNCTION extract_bands, instrument
   wave_bin_width = instrument.wave[1] - instrument.wave[0]
   FOR i = 0, n_elements(broad_band_limits[*, 0]) - 1 DO BEGIN
     wave_indices = where(instrument.wave GE broad_band_limits[i, 0] AND instrument.wave LE broad_band_limits[i, 1])
-    IF instrument.name EQ 'EUVE' THEN BEGIN
+    IF instrument_has_deep_channel(instrument) THEN BEGIN
       intensity[i, *] = total(instrument.intensity_deep[wave_indices, *], 1, /NAN) * wave_bin_width ; [counts]
-    ENDIF ELSE BEGIN ; ESCAPE
+    ENDIF ELSE BEGIN
       intensity[i, *] = total(instrument.intensity[wave_indices, *], 1, /NAN) * wave_bin_width ; [counts]
     ENDELSE
   ENDFOR
@@ -566,6 +910,38 @@ FUNCTION extract_bands, instrument
   intensity = intensity[*, 0:-2]
 
   return, {wave:broad_band_limits, intensity:intensity, jd:jd, time_iso:time_iso}
+END
+
+
+FUNCTION extract_filter_defined_bands, instrument
+  IF ~instrument_has_filter_defined_band_intensity(instrument) THEN BEGIN
+    message, /INFO, 'No filter-defined band light curves are available for ' + instrument.name + '.'
+    STOP
+  ENDIF
+
+  n_filter_defined_bands = n_elements(instrument.intensity_filter_defined_bands[*, 0])
+
+  IF structure_has_tag(instrument, 'FILTER_DEFINED_BAND_LIMITS') THEN BEGIN
+    filter_defined_band_limits = instrument.filter_defined_band_limits
+  ENDIF ELSE BEGIN
+    filter_defined_band_limits = get_filter_defined_band_response_limits(instrument.wave_filter_defined_bands, instrument.aeff_filter_defined_bands)
+  ENDELSE
+
+  IF structure_has_tag(instrument, 'FILTER_DEFINED_BAND_NAMES') THEN BEGIN
+    filter_defined_band_names = instrument.filter_defined_band_names
+  ENDIF ELSE BEGIN
+    filter_defined_band_names = strarr(n_filter_defined_bands)
+    FOR i = 0, n_filter_defined_bands - 1 DO filter_defined_band_names[i] = 'filter-defined band ' + strtrim(string(i + 1), 2)
+  ENDELSE
+
+  ; Drop final point in time which is always invalid for some reason
+  jd = instrument.jd[0:-2]
+  time_iso = instrument.time_iso[0:-2]
+  intensity = instrument.intensity_filter_defined_bands[*, 0:-2]
+  intensity = reform(intensity, n_filter_defined_bands, n_elements(jd))
+  filter_defined_band_limits = reform(filter_defined_band_limits, n_filter_defined_bands, 2)
+
+  return, {wave:filter_defined_band_limits, band_name:filter_defined_band_names, intensity:intensity, jd:jd, time_iso:time_iso}
 END
 
 
@@ -594,7 +970,9 @@ FUNCTION deconvolve_flare, emission_lines, flare_line, preflare_baselines, prefl
     intensities_deconvolved[i, *] = convert_percent_change_to_counts(light_curve_deconvolved, preflare_baseline.intensity)
   ENDFOR
   
-  return, {intensity:intensities_deconvolved, jd:emission_lines.jd, time_iso:emission_lines.time_iso, wave:emission_lines.wave}
+  result = {intensity:intensities_deconvolved, jd:emission_lines.jd, time_iso:emission_lines.time_iso, wave:emission_lines.wave}
+  IF structure_has_tag(emission_lines, 'BAND_NAME') THEN result = create_struct(result, {band_name:emission_lines.band_name})
+  return, result
 END
 
 
@@ -705,7 +1083,9 @@ FUNCTION get_dimming_depth, instrument, emission_lines, preflare_baselines, expo
   depth_over_squared_baseline = weighted_minimums/(preflare_baselines.intensity^2.)
   uncertainty_depth = 100 * sqrt(uncertainty_weighted_minimums^2 * (1/preflare_baselines.intensity)^2 + preflare_baselines.uncertainty^2 * depth_over_squared_baseline^2) ; [%]
   
-  return, {name:instrument.name, depth:depth, depth_time_range_indices:depth_time_range_indices_all, uncertainty:uncertainty_depth, wave:emission_lines.wave}
+  result = {name:instrument.name, depth:depth, depth_time_range_indices:depth_time_range_indices_all, uncertainty:uncertainty_depth, wave:emission_lines.wave}
+  IF structure_has_tag(emission_lines, 'BAND_NAME') THEN result = create_struct(result, {band_name:emission_lines.band_name})
+  return, result
 END
 
 
@@ -717,8 +1097,17 @@ FUNCTION compute_noise, instrument, exposure_time_sec, intensity, wavelength, wi
   ENDIF ELSE IF spectral_integration EQ 'bands' THEN BEGIN
     number_of_spectral_bins = wavelength[1] - wavelength[0]
   ENDIF
-  
-  IF instrument.name EQ 'EUVE' THEN BEGIN
+
+  noise_model = 'mcp'
+  IF structure_has_tag(instrument, 'NOISE_MODEL') THEN noise_model = strlowcase(strtrim(string(instrument.noise_model), 2))
+
+  IF noise_model EQ 'ccd' THEN BEGIN
+    pixels_per_measurement = instrument.ccd_pixels_per_resel * instrument.ccd_n_resels
+    dark_electrons = instrument.ccd_dark_rate_per_pixel * exposure_time_sec * pixels_per_measurement
+    read_variance_electrons = (instrument.ccd_read_noise_per_pixel)^2. * pixels_per_measurement
+    gain = instrument.ccd_gain_counts_per_electron
+    background_noise = (dark_electrons + read_variance_electrons) * gain * gain ; [counts^2], gain=1 count/electron for SNOUT
+  ENDIF ELSE IF instrument.name EQ 'EUVE' THEN BEGIN
     IF spectral_integration EQ 'single lines' THEN BEGIN
       background_rate = get_euve_spectrometer_background_rate(wavelength)
       background_noise = (background_rate * exposure_time_sec) * width_of_emission_line_bin ; [counts] 
@@ -728,6 +1117,8 @@ FUNCTION compute_noise, instrument, exposure_time_sec, intensity, wavelength, wi
     ENDIF ELSE IF spectral_integration EQ 'bands' THEN BEGIN
       background_noise = (instrument.size_of_resel_deep * instrument.background_rate_per_resel_deep * exposure_time_sec) * number_of_spectral_bins ; [counts]
     ENDIF
+  ENDIF ELSE IF instrument_has_deep_channel(instrument) AND spectral_integration EQ 'bands' THEN BEGIN
+    background_noise = (instrument.size_of_resel_deep * instrument.background_rate_per_resel_deep * exposure_time_sec) * number_of_spectral_bins ; [counts]
   ENDIF ELSE BEGIN ; ESCAPE
     background_noise = (instrument.size_of_resel * instrument.background_rate_per_resel * exposure_time_sec) * number_of_spectral_bins ; [counts]
   ENDELSE
@@ -784,7 +1175,9 @@ FUNCTION get_best_detection, instrument_dimming, num_lines_to_combine, NO_PLOTS=
   detection_ratio = instrument_dimming.depth / instrument_dimming.uncertainty
   best_detection = max(detection_ratio, index)
   best_detection_wavelength_combo = ''
-  IF num_lines_to_combine NE 2 AND n_elements(instrument_dimming.wave[0, *]) EQ 2 THEN BEGIN ; Logic to determine that we're looking at bands
+  IF structure_has_tag(instrument_dimming, 'BAND_NAME') THEN BEGIN
+    best_detection_wavelength_combo = instrument_dimming.band_name[index]
+  ENDIF ELSE IF num_lines_to_combine NE 2 AND n_elements(instrument_dimming.wave[0, *]) EQ 2 THEN BEGIN ; Logic to determine that we're looking at bands
     best_detection_wavelength_combo = JPMPrintNumber(instrument_dimming.wave[index, 0], /NO_DECIMALS) + '-' + JPMPrintNumber(instrument_dimming.wave[index, 1], /NO_DECIMALS) + 'Å'
   ENDIF ELSE BEGIN
     FOR i = 0, n_elements(instrument_dimming.wave[index, *]) - 1 DO BEGIN
@@ -797,7 +1190,7 @@ FUNCTION get_best_detection, instrument_dimming, num_lines_to_combine, NO_PLOTS=
 END
 
 
-FUNCTION print_detection_performance, instrument_detection, instrument_dimming, instrument, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS  
+PRO print_detection_performance, instrument_detection, instrument_dimming, instrument, exposure_time_sec, num_lines_to_combine, NO_PLOTS=NO_PLOTS
   IF ~keyword_set(NO_PLOTS) THEN BEGIN
     ordered_indices = sort(instrument_dimming.depth)
     p = plot(instrument_detection.detection_ratio[ordered_indices], thick=3, font_size=16, $
@@ -805,12 +1198,12 @@ FUNCTION print_detection_performance, instrument_detection, instrument_dimming, 
              xtitle='index of ' + jpmprintnumber(num_lines_to_combine, /NO_DECIMALS) + '-emission line combination', $
              ytitle='$\sigma$ detection (depth/uncertainty)')
   ENDIF
-  
+
   print, instrument_dimming.name + $
          ', exposure time = ' + jpmprintnumber(exposure_time_sec, /NO_DECIMALS) + $
          ' sec, # lines combined = ' + jpmprintnumber(num_lines_to_combine, /NO_DECIMALS) + $
          ', median depth = ' + JPMPrintNumber(median(instrument_dimming.depth)) + $
-         '%, median uncertainty = ' + JPMPrintNumber(median(instrument_dimming.uncertainty)) + $ 
-         ', best detection (depth/uncertainty) = ' + JPMPrintNumber(instrument_detection.best_detection), + $ 
+         '%, median uncertainty = ' + JPMPrintNumber(median(instrument_dimming.uncertainty)) + $
+         ', best detection (depth/uncertainty) = ' + JPMPrintNumber(instrument_detection.best_detection) + $
          ' for wavelength combo: ' + instrument_detection.best_detection_wavelength_combo
 END

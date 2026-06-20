@@ -65,7 +65,11 @@ FOREACH distance_pc, distance_pcs DO BEGIN
             resolve_routine, 'escape_simulate_dimming', /COMPILE_FULL_FILE, /QUIET
             resolve_routine, 'escape_simulate_dimming', /COMPILE_FULL_FILE, /QUIET ; Yes, have to do it twice to work
             escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
-                                     escape_dimming_output= escape_dimming, escape_midex_dimming_output= escape_midex_dimming, escape_detection_output=escape_detection, escape_midex_detection_output=escape_midex_detection
+                                     mission='escape', escape_dimming_output=escape_dimming, escape_detection_output=escape_detection
+            resolve_routine, 'escape_simulate_dimming', /COMPILE_FULL_FILE, /QUIET
+            resolve_routine, 'escape_simulate_dimming', /COMPILE_FULL_FILE, /QUIET
+            escape_simulate_dimming, distance_pc=distance_pc, column_density=column_density, coronal_temperature_k=coronal_temperature_k, expected_bg_event_ratio=expected_bg_event_ratio, exposure_time_sec=exposure_time_sec, num_lines_to_combine=num_lines_to_combine, $
+                                     mission='midex', escape_midex_dimming_output=escape_midex_dimming, escape_midex_detection_output=escape_midex_detection
             openu, lun, save_path_filename, width=200, /GET_LUN, /APPEND
             printf, lun, strtrim(index, 2), ',', JPMprintnumber(distance_pc), ',', JPMprintnumber(column_density, /EXPONENT_FORM), ',', JPMprintnumber(exposure_time_sec, /NO_DECIMALS), ',', JPMprintnumber(num_lines_to_combine, /NO_DECIMALS), ',', JPMprintnumber(median(escape_dimming.depth)), ',', JPMprintnumber(median(escape_dimming.uncertainty)), ',', JPMprintnumber(escape_detection.best_detection), ',', escape_detection.best_detection_wavelength_combo, ',', $
                          JPMprintnumber(median(escape_midex_dimming.depth)), ',', JPMprintnumber(median(escape_midex_dimming.uncertainty)), ',', JPMprintnumber(escape_midex_detection.best_detection), ',', escape_midex_detection.best_detection_wavelength_combo
